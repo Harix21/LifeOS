@@ -1,0 +1,28 @@
+.finance-app{--workspace-accent:#148565;--workspace-ink:#143e33;display:grid;grid-template-columns:196px minmax(0,1fr);gap:0;overflow:hidden;border:1px solid #dceae3;border-radius:18px;background:#f7faf8;box-shadow:0 12px 40px #173f3010}
+.finance-app-rail{display:flex;flex-direction:column;gap:7px;padding:20px 12px;border-right:1px solid #e2ece6;background:linear-gradient(180deg,#f0f7f3,#f8fbf9)}
+.finance-app-brand{display:flex;align-items:center;gap:9px;padding:0 5px 16px}
+.finance-app-brand>span{display:grid;place-items:center;width:35px;height:35px;border-radius:12px;background:#dff0e6;color:#13765d}
+.finance-app-brand small,.finance-app-brand b{display:block}
+.finance-app-brand small{color:#7d9b8b;font-size:8px;font-weight:750;letter-spacing:1px}
+.finance-app-brand b{margin-top:3px;color:#1b3d30;font-size:12px}
+.finance-app-caption{margin:8px 8px 3px;color:#8aa394;font-size:8px;font-weight:750;letter-spacing:1.1px}
+.finance-app-rail nav{display:grid;gap:3px}
+.finance-app-rail nav button,.finance-app-home{display:flex;align-items:center;gap:9px;min-height:35px;width:100%;border:0;border-radius:8px;background:transparent;color:#607b6d;text-align:left;padding:8px;font-size:10px;font-weight:600;transition:background .16s ease,color .16s ease,transform .16s ease}
+.finance-app-rail nav button:hover,.finance-app-home:hover{background:#e5f1e9;color:#17694f;transform:translateX(2px)}
+.finance-app-rail nav button.selected{background:#dcefe3;color:#11694e}
+.finance-nav-dot{width:7px;height:7px;margin:0 3px;border-radius:50%;background:#83a492}
+.finance-app-home{margin-top:auto;border-top:1px solid #e2ece6;border-radius:0;padding-top:15px}
+.finance-app-content{min-width:0;padding:20px;background:radial-gradient(ellipse at 100% 0%,#e8f4ec 0,transparent 36%),#f7faf8}
+.finance-app-content>.page{animation:finance-enter .28s ease both}
+.finance-app .panel,.finance-app .stat{border-color:#e0eae3;box-shadow:0 7px 20px #163c2a08}
+.finance-app .title h1{letter-spacing:-.7px}
+@keyframes finance-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+.dark .finance-app{border-color:#264539;background:#12221b}
+.dark .finance-app-rail{border-color:#29483b;background:linear-gradient(180deg,#172c22,#14241c)}
+.dark .finance-app-brand b{color:#e0f1e4}
+.dark .finance-app-rail nav button,.dark .finance-app-home{color:#a7c3b0}
+.dark .finance-app-rail nav button.selected{background:#244633;color:#a6e3c0}
+.dark .finance-app-content{background:radial-gradient(ellipse at 100% 0%,#1b3929 0,transparent 36%),#12221b}
+.dark .finance-app .panel,.dark .finance-app .stat{border-color:#29483b}
+@media(max-width:850px){.finance-app{grid-template-columns:minmax(0,1fr)}.finance-app-rail{min-width:0;max-width:100%;gap:8px;padding:12px;border-right:0;border-bottom:1px solid #e2ece6}.finance-app-brand{padding:0 5px}.finance-app-caption,.finance-app-home{display:none}.finance-app-rail nav{display:flex;min-width:0;max-width:100%;overflow-x:auto}.finance-app-rail nav button{width:auto;flex:0 0 auto;white-space:nowrap}.finance-app-content{padding:15px}}
+@media(max-width:620px){.finance-app{border-radius:14px}.finance-app-content{padding:12px}}

@@ -1,0 +1,7 @@
+create extension if not exists pgcrypto;
+create table if not exists public.lifeos_tasks(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users(id) on delete cascade,title text not null,area text not null default 'Personal' check(area in ('Personal','Professional','Fitness','Finance')),due_date date,done boolean not null default false,created_at timestamptz default now());
+create table if not exists public.lifeos_transactions(id uuid primary key default gen_random_uuid(),user_id uuid not null references auth.users(id) on delete cascade,title text not null,category text not null default 'Other',amount numeric(12,2) not null check(amount>=0),type text not null check(type in ('income','expense')),transaction_date date not null default current_date,created_at timestamptz default now());
+alter table public.lifeos_tasks enable row level security;alter table public.lifeos_transactions enable row level security;
+create policy "task own rows" on public.lifeos_tasks for all using(auth.uid()=user_id) with check(auth.uid()=user_id);
+create policy "transaction own rows" on public.lifeos_transactions for all using(auth.uid()=user_id) with check(auth.uid()=user_id);
+create index if not exists lifeos_tasks_user_date on public.lifeos_tasks(user_id,due_date);create index if not exists lifeos_tx_user_date on public.lifeos_transactions(user_id,transaction_date);

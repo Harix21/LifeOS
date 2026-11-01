@@ -1,0 +1,25 @@
+.projects-app{--workspace-accent:#586bd2;--workspace-ink:#272f55;display:grid;gap:0;overflow:hidden;border:1px solid #dfe3f2;border-radius:18px;background:#f7f8fc;box-shadow:0 12px 40px #27335a0d}
+.projects-app-header{display:flex;align-items:center;gap:18px;flex-wrap:wrap;padding:14px 19px;border-bottom:1px solid #e2e5f1;background:#fff}
+.projects-app-brand{display:flex;align-items:center;gap:9px;min-width:180px}
+.projects-app-brand>span{display:grid;place-items:center;width:34px;height:34px;border-radius:10px;background:#eef0ff;color:#586bd2}
+.projects-app-brand small,.projects-app-brand b{display:block}
+.projects-app-brand small{color:#8790b0;font-size:8px;letter-spacing:1.15px;font-weight:750}
+.projects-app-brand b{margin-top:3px;color:#272f55;font-size:13px}
+.projects-app-header nav{display:flex;align-items:center;gap:5px;flex:1;flex-wrap:wrap}
+.projects-app-header nav button,.projects-app-home{display:flex;align-items:center;gap:6px;min-height:33px;border:1px solid transparent;border-radius:8px;background:transparent;color:#707a9b;padding:7px 9px;font-size:9px;font-weight:650;transition:background .16s ease,color .16s ease,transform .16s ease}
+.projects-app-header nav button:hover,.projects-app-home:hover{background:#f1f2fc;color:#5266cb;transform:translateY(-1px)}
+.projects-app-header nav button.selected{border-color:#e0e4fa;background:#f0f1ff;color:#4f62c5}
+.projects-app-home{margin-left:auto;border-color:#e6e8f2;background:#fafaff;white-space:nowrap}
+.projects-app-content{padding:20px;background:linear-gradient(135deg,#f7f8fc,#f4f6fb)}
+.projects-app-content>.page{animation:projects-enter .28s ease both}
+.projects-app .panel{border-color:#e2e5f0;box-shadow:0 6px 20px #27335a08}
+.projects-app .data-line{min-height:54px}
+@keyframes projects-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
+.dark .projects-app{border-color:#323b5c;background:#161b2d}
+.dark .projects-app-header{border-color:#313951;background:#1a2134}
+.dark .projects-app-brand b{color:#e5e9ff}
+.dark .projects-app-header nav button,.dark .projects-app-home{color:#a8b1d1}
+.dark .projects-app-header nav button.selected{border-color:#414c79;background:#292f50;color:#c4ccff}
+.dark .projects-app-content{background:linear-gradient(135deg,#161b2d,#1a2035)}
+.dark .projects-app .panel{border-color:#303951}
+@media(max-width:620px){.projects-app{border-radius:14px}.projects-app-header{gap:10px;padding:12px}.projects-app-brand{min-width:0;flex:1}.projects-app-header nav{order:3;flex-basis:100%;overflow-x:auto;flex-wrap:nowrap}.projects-app-header nav button{white-space:nowrap}.projects-app-home{margin-left:0}.projects-app-content{padding:12px}}
