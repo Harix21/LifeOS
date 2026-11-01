@@ -16,8 +16,8 @@ import type { UseFormRegisterReturn } from "react-hook-form";
 import { z } from "zod";
 import { addDays, addMonths, addYears, format } from "date-fns";
 import {
-  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, ResponsiveContainer,
-  Tooltip, XAxis, YAxis,
+  Area, AreaChart, Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart,
+  ResponsiveContainer, Tooltip, XAxis, YAxis,
 } from "recharts";
 import { PersonalWorkspace } from "./components/personal/PersonalWorkspace";
 import { FitnessWorkspace } from "./components/fitness/FitnessWorkspace";
@@ -1444,7 +1444,7 @@ function HabitTrendChart({ rows, loading }: { rows: Row[]; loading: boolean }) {
   }), [rows]);
   if (loading) return <LoadingState compact />;
   if (!points.some((point) => point.checkIns > 0)) return <ChartEmpty text="Check in to a habit to see your daily activity here. No sample data is shown." />;
-  return <div className="chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={points} margin={{ left: -16, right: 8 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><Tooltip labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ""} /><Bar dataKey="checkIns" name="Habit check-ins" fill="#6888ee" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div>;
+  return <div className="chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={points} margin={{ left: -16, right: 8 }}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><Tooltip labelFormatter={(_, payload) => payload?.[0]?.payload?.date ?? ""} /><Line type="monotone" dataKey="checkIns" name="Habit check-ins" stroke="#6888ee" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} /></LineChart></ResponsiveContainer></div>;
 }
 
 function Reports({ userId, currencyCode }: { userId: string; currencyCode: string }) {
@@ -1632,18 +1632,153 @@ function TaskInsights({ rows }: { rows: Row[] }) {
 }
 
 function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] }) {
-  const activity = Array.from({ length: 7 }, (_, index) => {
-    const date = new Date();
-    date.setDate(date.getDate() - (6 - index));
-    const key = localDateKey(date);
-    return {
-      day: date.toLocaleDateString(undefined, { weekday: "short" }),
-      count: rows.filter((row) => typeof row.created_at === "string" && row.created_at.slice(0, 10) === key).length,
-    };
-  });
+  type Point = { label: string; value: number; compare?: number };
+  type ChartType = "bar" | "line" | "pie" | "metrics";
+  const colors = ["#6888ee", "#37ad83", "#e78b6e", "#d18b53", "#8e62b5", "#48a9b5"];
+  const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  const groupBy = (field: string, valueForRow: (row: Row) => number = () => 1): Point[] => {
+    const groups = new Map<string, number>();
+    for (const row of rows) {
+      const label = String(row[field] ?? "Unspecified").replaceAll("_", " ");
+      const value = valueForRow(row);
+      if (Number.isFinite(value)) groups.set(label, (groups.get(label) ?? 0) + value);
+    }
+    return [...groups].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value).slice(0, 8);
+  };
+  const byMonth = (field: string, valueForRow: (row: Row) => number = () => 1): Point[] => {
+    const groups = new Map<string, number>();
+    for (const row of rows) {
+      const date = recordDateKey(row[field]);
+      if (!date) continue;
+      const month = date.slice(0, 7);
+      const value = valueForRow(row);
+      if (Number.isFinite(value)) groups.set(month, (groups.get(month) ?? 0) + value);
+    }
+    return [...groups].sort(([a], [b]) => a.localeCompare(b))
+      .map(([month, value]) => ({ label: format(new Date(`${month}-01T12:00:00`), "MMM yy"), value }));
+  };
+  let title = `${resource.label} overview`;
+  let detail = "A breakdown of your saved records";
+  let chartType: ChartType = "bar";
+  let points: Point[] = [];
+  let valueLabel = "Records";
+  let metricLabel = "";
+  let metricValue: number | undefined;
+  let profileMetrics: { label: string; value: string }[] = [];
+  switch (resource.key) {
+    case "goals":
+      title = "Goals by status"; detail = "Your goals grouped by current status"; chartType = "pie"; points = groupBy("status"); break;
+    case "habit_completions":
+      title = "Habit check-ins"; detail = "Completions recorded by month"; chartType = "line"; points = byMonth("completed_on"); break;
+    case "journal_entries":
+      title = "Journal entries"; detail = "Entries recorded by month"; chartType = "line"; points = byMonth("entry_date"); break;
+    case "mood_entries":
+      title = "Mood check-ins"; detail = "Check-in frequency by mood"; chartType = "pie"; points = groupBy("mood"); break;
+    case "projects":
+      title = "Projects by status"; detail = "Portfolio distribution by current status"; chartType = "pie"; points = groupBy("status"); break;
+    case "project_milestones":
+      title = "Milestone progress"; detail = "Completed compared with outstanding milestones"; chartType = "pie";
+      points = [{ label: "Completed", value: rows.filter((row) => row.completed_at).length }, { label: "Open", value: rows.filter((row) => !row.completed_at).length }].filter((point) => point.value > 0); break;
+    case "skills":
+      title = "Skill proficiency"; detail = "Your highest recorded proficiency levels"; valueLabel = "Proficiency (%)"; points = groupBy("name", (row) => Number(row.proficiency ?? 0)); break;
+    case "job_applications":
+      title = "Career pipeline"; detail = "Applications grouped by current stage"; chartType = "pie"; points = groupBy("status"); break;
+    case "time_entries":
+      title = "Time by activity"; detail = "Hours calculated from completed time entries"; valueLabel = "Hours";
+      points = groupBy("title", (row) => row.ended_at && row.started_at
+        ? Math.max(0, (new Date(String(row.ended_at)).getTime() - new Date(String(row.started_at)).getTime()) / 3_600_000) : 0); break;
+    case "fitness_profiles": {
+      title = "Your fitness targets"; detail = "Personal measures and daily targets"; chartType = "metrics";
+      const profile = rows[0];
+      profileMetrics = [
+        { label: "Height", value: profile?.height_cm ? `${number(Number(profile.height_cm))} cm` : "Not set" },
+        { label: "Target weight", value: profile?.target_weight_kg ? `${number(Number(profile.target_weight_kg))} kg` : "Not set" },
+        { label: "Daily calories", value: profile?.daily_calorie_target ? `${number(Number(profile.daily_calorie_target))} kcal` : "Not set" },
+        { label: "Daily water", value: profile?.daily_water_target_ml ? `${number(Number(profile.daily_water_target_ml))} ml` : "Not set" },
+      ];
+      break;
+    }
+    case "weight_entries":
+      title = "Weight history"; detail = "Recorded measurements over time"; valueLabel = "Weight (kg)"; chartType = "line";
+      points = [...rows].sort((a, b) => String(a.recorded_on).localeCompare(String(b.recorded_on)))
+        .map((row) => ({ label: configuredDate(String(row.recorded_on)), value: Number(row.weight_kg) }));
+      metricLabel = "Latest weight";
+      metricValue = points.at(-1)?.value;
+      break;
+    case "exercises":
+      title = "Exercises by muscle group"; detail = "Your exercise library grouped by muscle group"; chartType = "pie"; points = groupBy("muscle_group"); break;
+    case "workout_routines":
+      title = "Routine library"; detail = "Your saved training plans"; chartType = "metrics";
+      profileMetrics = rows.slice(0, 4).map((row, index) => ({ label: `Routine ${index + 1}`, value: String(row.name ?? "Untitled") }));
+      break;
+    case "workout_routine_exercises":
+      title = "Routine volume"; detail = "Sets assigned by exercise position"; valueLabel = "Sets";
+      points = [...rows].sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0)).slice(0, 8)
+        .map((row, index) => ({ label: `Exercise ${index + 1}`, value: Number(row.sets ?? 0) })); break;
+    case "workout_sessions":
+      title = "Training time"; detail = "Workout minutes by month"; valueLabel = "Minutes"; chartType = "line";
+      points = byMonth("started_at", (row) => Number(row.duration_minutes ?? 0)); break;
+    case "workout_session_exercises":
+      title = "Exercises trained"; detail = "Logged sets by exercise"; valueLabel = "Sets"; points = groupBy("exercise_name", (row) => Number(row.sets ?? 0)); break;
+    case "nutrition_entries":
+      title = "Nutrition trend"; detail = "Calories recorded by month"; valueLabel = "Calories"; chartType = "line";
+      points = byMonth("consumed_at", (row) => Number(row.calories ?? 0)); break;
+    case "water_entries":
+      title = "Hydration logged"; detail = "Water intake by month"; valueLabel = "Milliliters"; chartType = "line";
+      points = byMonth("consumed_at", (row) => Number(row.amount_ml ?? 0)); break;
+    case "financial_accounts":
+      title = "Accounts by type"; detail = "Account distribution without combining different currencies"; chartType = "pie"; points = groupBy("type"); break;
+    case "transaction_categories":
+      title = "Categories by type"; detail = "Income and expense categories"; chartType = "pie"; points = groupBy("type"); break;
+    case "transactions":
+      title = "Cash flow mix"; detail = "Transaction amounts split by income and expense"; valueLabel = "Amount"; chartType = "pie"; points = groupBy("type", (row) => Number(row.amount ?? 0)); break;
+    case "loans":
+      title = "Borrowed vs. lent"; detail = "Outstanding balances by direction"; valueLabel = "Balance"; chartType = "pie";
+      points = groupBy("direction", (row) => row.is_settled ? 0 : Number(row.amount ?? 0)); break;
+    case "budgets":
+      title = "Budget limits"; detail = "Planned amounts by budget"; valueLabel = "Limit"; points = groupBy("name", (row) => Number(row.amount ?? 0)); break;
+    case "savings_goals":
+      title = "Savings goal progress"; detail = "Current amount compared with each target"; valueLabel = "Saved";
+      points = rows.slice(0, 8).map((row) => ({ label: String(row.name ?? "Goal"), value: Number(row.current_amount ?? 0), compare: Number(row.target_amount ?? 0) })); break;
+    case "savings_contributions":
+      title = "Savings contributions"; detail = "Contributions by month"; valueLabel = "Amount"; chartType = "line";
+      points = byMonth("contributed_on", (row) => Number(row.amount ?? 0)); break;
+    case "recurring_transactions":
+      title = "Recurring cash flow"; detail = "Scheduled amounts by transaction type"; valueLabel = "Amount"; chartType = "pie"; points = groupBy("type", (row) => Number(row.amount ?? 0)); break;
+    case "calendar_events":
+      title = "Calendar activity"; detail = "Events scheduled by month"; chartType = "line"; points = byMonth("starts_at"); break;
+    case "notifications":
+      title = "Notification status"; detail = "Read and unread notifications"; chartType = "pie";
+      points = [{ label: "Read", value: rows.filter((row) => row.read_at).length }, { label: "Unread", value: rows.filter((row) => !row.read_at).length }].filter((point) => point.value > 0); break;
+    default: {
+      const categoricalField = resource.fields.find((field) => field.options?.length)?.name;
+      const field = categoricalField ?? resource.display;
+      title = categoricalField ? `${resource.label} by ${field.replaceAll("_", " ")}` : `${resource.label} overview`;
+      detail = categoricalField ? `Records grouped by ${field.replaceAll("_", " ")}` : `Saved ${resource.label.toLowerCase()} by ${resource.display.replaceAll("_", " ")}`;
+      chartType = categoricalField ? "pie" : "bar";
+      points = groupBy(field);
+    }
+  }
+  const total = points.reduce((sum, point) => sum + point.value, 0);
+  const leading = [...points].sort((a, b) => b.value - a.value)[0];
   return <div className="task-insights-grid">
-    <section className="panel"><PanelHeading title={`${resource.label} activity`} detail="Records created each day · last 7 days" />
-      {rows.length ? <div className="chart priority-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={activity}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} width={28} /><Tooltip /><Bar dataKey="count" name={resource.label} fill="var(--accent)" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div> : <ChartEmpty text={`Create a ${resource.label.toLowerCase()} record to see activity here.`} />}
+    <section className="panel"><PanelHeading title={title} detail={detail} />
+      {rows.length ? <>
+        <div className="record-insight-metrics">
+          <div><small>Total records</small><b>{rows.length.toLocaleString()}</b></div>
+          {chartType !== "metrics" && <div><small>{metricLabel || valueLabel}</small><b>{number(metricValue ?? total)}</b></div>}
+          {leading && <div><small>Leading {chartType === "pie" ? "group" : "item"}</small><b>{leading.label} · {number(leading.value)}</b></div>}
+        </div>
+        {chartType === "metrics" ? <div className="record-insight-metrics record-profile-metrics">{profileMetrics.map((metric) => <div key={metric.label}><small>{metric.label}</small><b>{metric.value}</b></div>)}</div>
+          : !points.length ? <ChartEmpty text={`Add relevant ${resource.label.toLowerCase()} data to see this chart.`} />
+            : <div className="chart">
+              <ResponsiveContainer width="100%" height="100%">
+                {chartType === "pie" ? <PieChart><Pie data={points} dataKey="value" nameKey="label" innerRadius="48%" outerRadius="76%" paddingAngle={3}>{points.map((point, index) => <Cell key={point.label} fill={colors[index % colors.length]} />)}</Pie><Tooltip formatter={(value) => number(Number(value))} /><Legend /></PieChart>
+                  : chartType === "line" ? <LineChart data={points}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="label" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip formatter={(value) => `${number(Number(value))} ${valueLabel.toLowerCase()}`} /><Line type="monotone" dataKey="value" name={valueLabel} stroke="#6888ee" strokeWidth={2.5} dot={{ r: 3 }} activeDot={{ r: 5 }} /></LineChart>
+                    : <BarChart data={points}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="label" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip formatter={(value) => `${number(Number(value))} ${valueLabel.toLowerCase()}`} /><Legend />{points.some((point) => point.compare !== undefined) && <Bar dataKey="compare" name="Target" fill="#d9e0f8" radius={[4, 4, 0, 0]} />}<Bar dataKey="value" name={valueLabel} fill="var(--accent)" radius={[4, 4, 0, 0]} /></BarChart>}
+              </ResponsiveContainer>
+            </div>}
+      </> : <ChartEmpty text={`Create a ${resource.label.toLowerCase()} record to see relevant metrics here.`} />}
     </section>
   </div>;
 }

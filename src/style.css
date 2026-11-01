@@ -213,6 +213,11 @@ svg{flex-shrink:0}
 .task-summary>div{display:grid;gap:4px;padding:10px;border-radius:8px;background:var(--bg)}
 .task-summary b{font-size:18px}
 .task-summary small{font-size:9px;color:var(--muted)}
+.record-insight-metrics{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:9px;margin-bottom:8px}
+.record-insight-metrics>div{display:grid;gap:4px;min-width:0;padding:10px;border-radius:8px;background:var(--bg)}
+.record-insight-metrics small{font-size:9px;color:var(--muted)}
+.record-insight-metrics b{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.record-profile-metrics{grid-template-columns:repeat(4,minmax(0,1fr));margin:0}
 .priority-chart{height:172px}
 .habit-calendar-controls{display:flex;align-items:center;gap:7px}
 .habit-calendar-controls .icon{width:27px;height:27px}
@@ -512,6 +517,7 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
   .stat small{font-size:9px}
   .stat p{font-size:8px}
   .dashboard-grid,.area-dashboard-grid,.settings-grid,.task-insights-grid,.habit-insights-grid,.daily-agenda-grid,.finance-dashboard-grid,.finance-summary-grid{grid-template-columns:1fr;gap:11px}
+  .record-insight-metrics,.record-profile-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .journal-settings-panel{grid-column:auto}
   .journal-profile-options{grid-template-columns:1fr}
   .journal-capture{grid-template-columns:1fr}
