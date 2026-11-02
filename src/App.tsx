@@ -10,6 +10,8 @@ import {
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
 import type { Session, SupabaseClient } from "@supabase/supabase-js";
+import { Capacitor } from "@capacitor/core";
+import { LocalNotifications } from "@capacitor/local-notifications";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
 import { Route, Routes, useLocation, useNavigate } from "react-router-dom";
 import { useForm } from "react-hook-form";
@@ -25,6 +27,13 @@ import { FitnessWorkspace } from "./components/fitness/FitnessWorkspace";
 import { FinanceWorkspace } from "./components/finance/FinanceWorkspace";
 import { ProjectsWorkspace } from "./components/projects/ProjectsWorkspace";
 import { DEMO_USER_ID, getDemoPreferences, getDemoProfile, getDemoRows } from "./demoData";
+import {
+  cacheServerRows, countPendingMutations, enqueueDelete, enqueueRpc,
+  enqueueUpsert, getCachedRows, readCachedSingle, subscribeToLocalChanges,
+  syncAfterLocalWrite, syncPendingMutations,
+} from "./offline/offlineDatabase";
+import type { OfflineRecordChange } from "./offline/offlineDatabase";
+import { cancelDeviceReminders, requestDeviceNotificationPermission, scheduleDeviceReminders } from "./offline/localNotifications";
 
 type FieldKind = "text" | "textarea" | "date" | "datetime-local" | "number" | "select" | "checkbox" | "time" | "url" | "relation";
 type Field = {
@@ -251,8 +260,6 @@ const groups = [
 const resourceFor = (key: string) => resources.find((resource) => resource.key === key);
 const resourceLabel = (key: string) => resourceFor(key)?.label ?? key;
 const editFieldNames: Record<string, string[]> = {
-  tasks: ["status"],
-  habits: ["is_active"],
   transactions: ["amount"],
   nutrition_entries: ["calories", "protein_g", "carbohydrates_g", "fat_g"],
   water_entries: ["amount_ml"],
@@ -416,24 +423,83 @@ const loanCurrency = (amount: number) => new Intl.NumberFormat(undefined, { styl
 async function loadRows(table: string, userId: string): Promise<Row[]> {
   if (userId === DEMO_USER_ID) return getDemoRows(table, userId) as Row[];
   if (!supabase) throw new Error("Supabase is not configured.");
+  const cached = await getCachedRows(userId, table);
+  if (!navigator.onLine) {
+    if (cached.ready) return cached.rows as Row[];
+    throw new Error("No saved data is available offline yet. Connect to the internet once to download your records.");
+  }
   const pageSize = 500;
   const allRows: Row[] = [];
-  for (let offset = 0; ; offset += pageSize) {
-    const { data, error } = await supabase.from(table).select("*").eq("user_id", userId)
-      .order("created_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + pageSize - 1);
-    if (error) throw error;
-    const page = (data ?? []) as Row[];
-    allRows.push(...page);
-    if (page.length < pageSize) return allRows;
+  try {
+    for (let offset = 0; ; offset += pageSize) {
+      const { data, error } = await supabase.from(table).select("*").eq("user_id", userId)
+        .order("created_at", { ascending: false }).order("id", { ascending: false }).range(offset, offset + pageSize - 1);
+      if (error) throw error;
+      const page = (data ?? []) as Row[];
+      allRows.push(...page);
+      if (page.length < pageSize) return await cacheServerRows(userId, table, allRows) as Row[];
+    }
+  } catch (error) {
+    if (cached.ready && (!navigator.onLine || error instanceof TypeError)) return cached.rows as Row[];
+    throw error;
   }
 }
 
 function useRows(table: string, userId: string, enabled = true) {
-  return useQuery({
+  const queryClient = useQueryClient();
+  const query = useQuery({
     queryKey: ["rows", userId, table],
     queryFn: () => loadRows(table, userId),
     enabled: Boolean((supabase || userId === DEMO_USER_ID) && enabled),
   });
+  useEffect(() => subscribeToLocalChanges(userId, () => {
+    void queryClient.invalidateQueries({ queryKey: ["rows", userId, table] });
+  }), [queryClient, table, userId]);
+  return query;
+}
+
+async function loadSingleRow(table: string, userId: string): Promise<Row | null> {
+  if (!supabase) throw new Error("Supabase is not configured.");
+  const cached = await readCachedSingle(userId, table);
+  if (!navigator.onLine) {
+    if (cached.ready) return cached.row as Row | null;
+    throw new Error("No saved account settings are available offline yet.");
+  }
+  try {
+    const { data, error } = await supabase.from(table).select("*").eq("user_id", userId).maybeSingle();
+    if (error) throw error;
+    const rows = data ? [{ ...data, id: userId, user_id: userId }] as Row[] : [];
+    return (await cacheServerRows(userId, table, rows))[0] as Row | undefined ?? null;
+  } catch (error) {
+    if (cached.ready && (!navigator.onLine || error instanceof TypeError)) return cached.row as Row | null;
+    throw error;
+  }
+}
+
+async function saveQueuedRow(
+  userId: string,
+  table: string,
+  payload: Record<string, unknown>,
+  options: { onConflict?: string; cacheId?: string } = {},
+) {
+  await enqueueUpsert(userId, table, payload, options);
+  return syncQueuedChanges(userId);
+}
+
+async function deleteQueuedRow(userId: string, table: string, id: string) {
+  await enqueueDelete(userId, table, id);
+  return syncQueuedChanges(userId);
+}
+
+async function syncQueuedChanges(userId: string) {
+  if (supabase && navigator.onLine) return syncAfterLocalWrite(supabase, userId);
+  return { synced: 0, remaining: await countPendingMutations(userId), error: null as string | null };
+}
+
+function savedLocallyMessage(label: string, result: { remaining: number; error: string | null }) {
+  if (result.error) return `${label} saved on this device. Sync is pending: ${result.error}`;
+  if (result.remaining) return `${label} saved on this device and will sync when internet returns.`;
+  return `${label} saved.`;
 }
 
 function groupLoans(rows: Row[]): LoanGroup[] {
@@ -657,6 +723,9 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   const [searchCategory, setSearchCategory] = useState("all");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [online, setOnline] = useState(navigator.onLine);
+  const [pendingChanges, setPendingChanges] = useState(0);
+  const [syncError, setSyncError] = useState("");
+  const [notificationError, setNotificationError] = useState("");
   const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
   const location = useLocation();
@@ -665,23 +734,20 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   const searchInput = useRef<HTMLInputElement>(null);
   const user = session.user;
   const demoMode = isDemoSession(session);
-  const canWrite = online && !demoMode;
+  const canWrite = !demoMode;
+  const [deviceNotificationsEnabled, setDeviceNotificationsEnabled] = useState(false);
   const profileQuery = useQuery({
     queryKey: ["profile", user.id],
     queryFn: async () => {
       if (demoMode) return getDemoProfile(user.id) as Row;
-      const { data, error } = await supabase!.from("profiles").select("*").eq("user_id", user.id).maybeSingle();
-      if (error) throw error;
-      return data as Row | null;
+      return loadSingleRow("profiles", user.id);
     },
   });
   const preferenceQuery = useQuery({
     queryKey: ["preferences", user.id],
     queryFn: async () => {
       if (demoMode) return getDemoPreferences(user.id) as Row;
-      const { data, error } = await supabase!.from("user_preferences").select("*").eq("user_id", user.id).maybeSingle();
-      if (error) throw error;
-      return data as Row | null;
+      return loadSingleRow("user_preferences", user.id);
     },
   });
   const displayTheme = theme === "system" ? (window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light") : theme;
@@ -700,6 +766,51 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
     },
   });
   const visibleSearchResults = (searchResults.data ?? []).filter(({ table }) => searchCategory === "all" || table === searchCategory);
+  const reminderTasks = useRows("tasks", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+  const reminderEvents = useRows("calendar_events", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+  const reminderBills = useRows("recurring_transactions", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+  const reminderHabits = useRows("habits", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+  const reminderNotifications = useRows("notifications", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+
+  useEffect(() => {
+    const preferenceKey = `lifeos-device-notifications-enabled:${user.id}`;
+    const refresh = () => setDeviceNotificationsEnabled(localStorage.getItem(preferenceKey) === "true");
+    const changed = (event: Event) => {
+      const detail = (event as CustomEvent<{ userId: string }>).detail;
+      if (detail?.userId === user.id) refresh();
+    };
+    refresh();
+    window.addEventListener("lifeos-device-notifications-changed", changed);
+    return () => window.removeEventListener("lifeos-device-notifications-changed", changed);
+  }, [user.id]);
+
+  useEffect(() => {
+    let active = true;
+    const synchronizeReminders = async () => {
+      if (demoMode || !Capacitor.isNativePlatform()) return;
+      try {
+        if (!deviceNotificationsEnabled) {
+          await cancelDeviceReminders(user.id);
+          if (active) setNotificationError("");
+          return;
+        }
+        if ([reminderTasks, reminderEvents, reminderBills, reminderHabits, reminderNotifications]
+          .some((query) => query.isLoading || (query.isError && !query.data))) return;
+        await scheduleDeviceReminders(user.id, {
+          tasks: reminderTasks.data ?? [],
+          events: reminderEvents.data ?? [],
+          recurringTransactions: reminderBills.data ?? [],
+          habits: reminderHabits.data ?? [],
+          notifications: reminderNotifications.data ?? [],
+        });
+        if (active) setNotificationError("");
+      } catch (error) {
+        if (active) setNotificationError(error instanceof Error ? `Device reminders could not be updated: ${error.message}` : "Device reminders could not be updated.");
+      }
+    };
+    void synchronizeReminders();
+    return () => { active = false; };
+  }, [demoMode, deviceNotificationsEnabled, reminderBills.data, reminderBills.isLoading, reminderEvents.data, reminderEvents.isLoading, reminderHabits.data, reminderHabits.isLoading, reminderNotifications.data, reminderNotifications.isLoading, reminderTasks.data, reminderTasks.isLoading, user.id]);
 
   useEffect(() => {
     const onlineHandler = () => setOnline(true);
@@ -708,6 +819,62 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
     window.addEventListener("offline", offlineHandler);
     return () => { window.removeEventListener("online", onlineHandler); window.removeEventListener("offline", offlineHandler); };
   }, []);
+  useEffect(() => {
+    if (demoMode) return;
+    let active = true;
+    let syncing = false;
+    async function refreshPending() {
+      const count = await countPendingMutations(user.id);
+      if (active) setPendingChanges(count);
+    }
+    async function synchronize() {
+      if (!online || syncing || !supabase) return;
+      syncing = true;
+      let failed = "";
+      try {
+        const result = await syncPendingMutations(supabase, user.id);
+        if (result.synced) {
+          setSyncError("");
+          await queryClient.invalidateQueries({ queryKey: ["rows", user.id] });
+          await queryClient.invalidateQueries({ queryKey: ["profile", user.id] });
+          await queryClient.invalidateQueries({ queryKey: ["preferences", user.id] });
+        }
+      } catch (error) {
+        failed = error instanceof Error ? error.message : "Could not sync changes.";
+        if (active) setSyncError(failed);
+      }
+      try {
+        const tables = [...new Set(resources.map((resource) => resource.table))];
+        const additionalTables = ["notification_preferences", "telegram_connections"];
+        for (const table of [...tables, ...additionalTables]) await loadRows(table, user.id);
+        await Promise.all([loadSingleRow("profiles", user.id), loadSingleRow("user_preferences", user.id)]);
+        await queryClient.invalidateQueries({ queryKey: ["rows", user.id] });
+        await queryClient.invalidateQueries({ queryKey: ["profile", user.id] });
+        await queryClient.invalidateQueries({ queryKey: ["preferences", user.id] });
+      } catch (error) {
+        if (navigator.onLine && active && !failed) {
+          failed = error instanceof Error ? error.message : "Could not download LifeOS data for offline use.";
+          setSyncError(failed);
+        }
+      } finally {
+        syncing = false;
+        await refreshPending();
+        if (active && !failed) setSyncError("");
+      }
+    }
+    void refreshPending();
+    void synchronize();
+    const unsubscribe = subscribeToLocalChanges(user.id, () => { void refreshPending(); });
+    const resumeHandler = () => { if (navigator.onLine) void synchronize(); };
+    window.addEventListener("online", resumeHandler);
+    document.addEventListener("visibilitychange", resumeHandler);
+    return () => {
+      active = false;
+      unsubscribe();
+      window.removeEventListener("online", resumeHandler);
+      document.removeEventListener("visibilitychange", resumeHandler);
+    };
+  }, [demoMode, online, queryClient, user.id]);
   useEffect(() => { setActiveSearchIndex(0); }, [search, searchCategory]);
   useEffect(() => { if (mobileSearchOpen) searchInput.current?.focus(); }, [mobileSearchOpen]);
   useEffect(() => {
@@ -766,8 +933,13 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
     setTheme(next);
     localStorage.setItem("lifeos-theme", next);
     if (demoMode) return;
-    void supabase!.from("user_preferences").upsert({ user_id: user.id, theme: next }, { onConflict: "user_id" })
-      .then(({ error }) => { if (error) notify(error.message, true); else void queryClient.invalidateQueries({ queryKey: ["preferences", user.id] }); });
+    void enqueueUpsert(user.id, "user_preferences", { theme: next }, { onConflict: "user_id" })
+      .then(() => syncQueuedChanges(user.id))
+      .then((result) => {
+        if (result?.error) notify(`Theme saved on this device. Sync is pending: ${result.error}`, true);
+        void queryClient.invalidateQueries({ queryKey: ["preferences", user.id] });
+      })
+      .catch((error) => notify(`Could not save theme locally: ${error instanceof Error ? error.message : "Unknown storage error."}`, true));
   }
   function navigateTo(key: string) {
     navigate(key === "overview" ? "/" : `/module/${key}`);
@@ -781,7 +953,6 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   }
   function requestQuickAdd(target: string) {
     if (demoMode) { notify("Demo mode is read-only. Sign in to create or change records."); return; }
-    if (!online) { notify("You are offline. LifeOS will not queue changes.", true); return; }
     setQuickAddTarget(target);
     setQuickAddRequest((request) => request + 1);
     navigateTo(target);
@@ -851,7 +1022,10 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
         </button>
       </nav>
       <div className="sidebottom">
-        <div className={`status ${!online && !demoMode ? "offline-status" : ""}`}>● {demoMode ? "Demo workspace" : online ? "Supabase workspace" : "Offline — changes disabled"}</div>
+        <div className={`status ${!online && !demoMode || syncError || notificationError || pendingChanges ? "offline-status" : ""}`} title={syncError || notificationError || undefined}>
+          ● {demoMode ? "Demo workspace" : syncError || notificationError ? `Needs attention${pendingChanges ? ` · ${pendingChanges} pending` : ""}`
+            : pendingChanges ? `${pendingChanges} changes waiting to sync` : online ? "Synced with Supabase" : "Offline — changes saved on device"}
+        </div>
         <button className={`nav ${pageKey === "settings" ? "active" : ""}`} onClick={() => navigateTo("settings")}><Settings size={16} /><span>Settings</span></button>
         <div className="user"><span className="avatar">{(String(profileQuery.data?.display_name || user.email || "U").trim()[0] ?? "U").toUpperCase()}</span>
           <div className="user-info"><b>{String(profileQuery.data?.display_name || "Your workspace")}</b><small>{user.email}</small></div>
@@ -1126,12 +1300,9 @@ function JournalPage({ userId, profileName, preferences, onToast, readOnly = fal
       if (readOnly) throw new Error("Demo mode is read-only. Sign in to edit journal pages.");
       if (!supabase) throw new Error("Supabase is not configured.");
       const payload = { title: entryTitle.trim() || `My day · ${configuredDate(selectedDate)}`, mood: entryMood.trim() || null, body: entryBody, entry_date: selectedDate };
-      const result = selectedEntry
-        ? await supabase.from("journal_entries").update(payload).eq("id", selectedEntry.id).eq("user_id", userId)
-        : await supabase.from("journal_entries").insert({ ...payload, user_id: userId });
-      if (result.error) throw result.error;
+      return saveQueuedRow(userId, "journal_entries", { ...payload, id: selectedEntry?.id ?? crypto.randomUUID() });
     },
-    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "journal_entries"] }); onToast("Journal page saved."); },
+    onSuccess: async (result) => { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "journal_entries"] }); onToast(savedLocallyMessage("Journal page", result)); },
     onError: (error) => onToast(`Could not save journal page: ${error.message}`, true),
   });
   const loading = queries.some((query) => query.isLoading);
@@ -1931,11 +2102,10 @@ function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] })
   </div>;
 }
 
-function HabitInsights({ habits, completions, loading, online, busy, onToggleCheckin }: {
+function HabitInsights({ habits, completions, loading, busy, onToggleCheckin }: {
   habits: Row[];
   completions: Row[];
   loading: boolean;
-  online: boolean;
   busy: boolean;
   onToggleCheckin: (habitId: string, date: string, checked: boolean) => void;
 }) {
@@ -1998,7 +2168,7 @@ function HabitInsights({ habits, completions, loading, online, busy, onToggleChe
         return <div className="habit-calendar-row" key={habit.id}>
           <span className={`habit-icon habit-color-${String(habit.color ?? "violet")}`}><HabitIcon size={15} /></span>
           <span>{String(habit.name)}</span>
-          <button className={`secondary check-in ${checked ? "checked-in" : ""}`} disabled={!online || busy || selectedDate > today()} onClick={() => onToggleCheckin(String(habit.id), selectedDate, checked)}>
+          <button className={`secondary check-in ${checked ? "checked-in" : ""}`} disabled={busy || selectedDate > today()} onClick={() => onToggleCheckin(String(habit.id), selectedDate, checked)}>
             {checked ? "Checked in" : "Check in"}
           </button>
         </div>;
@@ -2033,7 +2203,6 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const save = useMutation({
     mutationFn: async (values: Record<string, unknown>) => {
       if (!supabase) throw new Error("Supabase is not configured.");
-      if (!online) throw new Error("You are offline. Changes have not been saved.");
       const payload = cleanFormValues(values, fieldsForRecord(resource, Boolean(editing)));
       if (resource.key === "tasks" && payload.status === "done") payload.completed_at = editing?.completed_at ?? new Date().toISOString();
       else if (resource.key === "tasks" && payload.status && payload.status !== "done") payload.completed_at = null;
@@ -2041,93 +2210,112 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
         const accountAmount = Number(values.account_paid_amount ?? 0);
         const borrowedAmount = Number(values.borrowed_amount ?? 0);
         const loanDirection = String(values.funding_source ?? "") === "lent" ? "lent" : "borrowed";
-        const { error } = await supabase.rpc("create_expense_with_funding_split", {
+        const transactionId = crypto.randomUUID();
+        const loanId = borrowedAmount > 0 ? crypto.randomUUID() : null;
+        const transactionDate = String(payload.transaction_date);
+        const personName = String(values.borrowed_from ?? "").trim();
+        const expenseAmount = Number(payload.amount);
+        const accountId = accountAmount > 0 ? String(payload.account_id ?? "") || null : null;
+        const notes = payload.notes ?? null;
+        const changes: OfflineRecordChange[] = [{
+          kind: "upsert",
+          table: "transactions",
+          row: {
+            id: transactionId, user_id: userId, table: "transactions", title: payload.title, amount: expenseAmount,
+            type: "expense", transaction_date: transactionDate, account_id: accountId,
+            account_paid_amount: accountAmount, category_id: payload.category_id ?? null, notes,
+          } as Row & { table: string },
+        }];
+        const args: Record<string, unknown> = {
           p_user_id: userId,
           p_title: String(payload.title),
-          p_amount: Number(payload.amount),
-          p_transaction_date: String(payload.transaction_date),
-          p_account_id: accountAmount > 0 ? payload.account_id ?? null : null,
+          p_amount: expenseAmount,
+          p_transaction_date: transactionDate,
+          p_account_id: accountId,
           p_account_amount: accountAmount,
           p_category_id: payload.category_id ?? null,
-          p_notes: payload.notes ?? null,
-          p_borrowed_from: String(values.borrowed_from ?? "").trim() || null,
+          p_notes: notes,
+          p_borrowed_from: personName || null,
           p_borrowed_amount: borrowedAmount,
           p_loan_direction: loanDirection,
+          p_transaction_id: transactionId,
+          p_loan_id: loanId,
+        };
+        if (loanId) changes.push({
+          kind: "upsert",
+          table: "loans",
+          row: {
+            id: loanId, user_id: userId, table: "loans", person_name: personName, direction: loanDirection,
+            amount: borrowedAmount, loan_date: transactionDate, due_date: null, is_settled: false,
+            notes: [notes, `${loanDirection === "lent" ? "Lent" : "Borrowed"} for: ${String(payload.title)}`].filter(Boolean).join("\n"),
+            transaction_id: transactionId,
+          } as Row & { table: string },
         });
-        if (error) throw error;
-        return null;
+        await enqueueRpc(userId, "create_expense_with_funding_split", args, changes);
+        return syncQueuedChanges(userId);
       }
-      const result = resource.table === "fitness_profiles"
-        ? await supabase.from(resource.table).upsert({ ...payload, user_id: userId }, { onConflict: "user_id" }).select().single()
-        : editing
-        ? await supabase.from(resource.table).update(payload).eq("id", editing.id).eq("user_id", userId).select().single()
-        : await supabase.from(resource.table).insert({ ...payload, user_id: userId }).select().single();
-      if (result.error) throw result.error;
-      return result.data;
+      const isSingleton = resource.table === "fitness_profiles";
+      const recordId = isSingleton ? userId : editing?.id ?? crypto.randomUUID();
+      return saveQueuedRow(userId, resource.table, {
+        ...payload,
+        ...(!isSingleton ? { id: recordId } : {}),
+      }, { onConflict: isSingleton ? "user_id" : "id", cacheId: recordId });
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
       if (resource.key === "transactions" || resource.key === "nutrition_entries") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "loans"] });
-      setDialog(false); setEditing(null); onToast(`${resource.label} saved.`);
+      setDialog(false); setEditing(null); onToast(savedLocallyMessage(resource.label, result));
     },
     onError: (error) => onToast(`Could not save ${resource.label.toLowerCase()}: ${error.message}`, true),
   });
   const remove = useMutation({
     mutationFn: async (row: Row) => {
-      if (!online) throw new Error("You are offline. The record was not deleted.");
-      const { error } = await supabase!.from(resource.table).delete().eq("id", row.id).eq("user_id", userId);
-      if (error) throw error;
+      return deleteQueuedRow(userId, resource.table, row.id);
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
       if (resource.key === "habits") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "habit_completions"] });
-      setDeleting(null); onToast(`${resource.label} deleted.`);
+      setDeleting(null); setDialog(false); setEditing(null); onToast(savedLocallyMessage(`${resource.label} deleted`, result));
     },
     onError: (error) => onToast(`Could not delete record: ${error.message}`, true),
   });
   const changePriority = useMutation({
     mutationFn: async ({ row, priority }: { row: Row; priority: string }) => {
-      if (!online) throw new Error("You are offline. The priority was not changed.");
-      const { error } = await supabase!.from("tasks").update({ priority }).eq("id", row.id).eq("user_id", userId);
-      if (error) throw error;
+      return saveQueuedRow(userId, "tasks", { id: row.id, priority });
     },
-    onSuccess: async () => {
+    onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, "tasks"] });
-      onToast("Task priority updated.");
+      onToast(savedLocallyMessage("Task priority", result));
     },
     onError: (error) => onToast(`Could not update task priority: ${error.message}`, true),
   });
   const updateInlineField = useMutation({
     mutationFn: async ({ row, field, value }: { row: Row; field: Field; value: unknown }) => {
-      if (!online) throw new Error("You are offline. The record was not changed.");
-      if (!supabase) throw new Error("Supabase is not configured.");
       const patch: Record<string, unknown> = { [field.name]: value };
       if (resource.key === "tasks" && field.name === "status") {
         patch.completed_at = value === "done" ? row.completed_at ?? new Date().toISOString() : null;
       }
-      const { data, error } = await supabase.from(resource.table).update(patch)
-        .eq("id", row.id).eq("user_id", userId).select("id").maybeSingle();
-      if (error) throw error;
-      if (!data) throw new Error("The record could not be found or updated.");
+      return saveQueuedRow(userId, resource.table, { id: row.id, ...patch });
     },
-    onSuccess: async (_, variables) => {
+    onSuccess: async (result, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
-      onToast(`${variables.field.label} updated.`);
+      onToast(savedLocallyMessage(variables.field.label, result));
     },
     onError: (error, variables) => onToast(`Could not update ${variables.field.label.toLowerCase()}: ${error.message}`, true),
   });
   const toggleHabitCheckin = useMutation({
     mutationFn: async ({ habitId, date, checked }: { habitId: string; date: string; checked: boolean }) => {
-      if (!online) throw new Error("You are offline. The habit check-in was not changed.");
-      if (!supabase) throw new Error("Supabase is not configured.");
-      const result = checked
-        ? await supabase.from("habit_completions").delete().eq("user_id", userId).eq("habit_id", habitId).eq("completed_on", date)
-        : await supabase.from("habit_completions").upsert({ user_id: userId, habit_id: habitId, completed_on: date }, { onConflict: "user_id,habit_id,completed_on" });
-      if (result.error) throw result.error;
+      if (checked) {
+        await enqueueDelete(userId, "habit_completions", "", { habit_id: habitId, completed_on: date });
+        return syncQueuedChanges(userId);
+      }
+      return saveQueuedRow(userId, "habit_completions", { habit_id: habitId, completed_on: date }, {
+        onConflict: "user_id,habit_id,completed_on",
+      });
     },
-    onSuccess: async (_, variables) => {
+    onSuccess: async (result, variables) => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, "habit_completions"] });
-      onToast(variables.checked ? "Habit check-in removed." : "Habit check-in saved.");
+      onToast(savedLocallyMessage(variables.checked ? "Habit check-in removed" : "Habit check-in", result));
     },
     onError: (error) => onToast(`Could not update habit check-in: ${error.message}`, true),
   });
@@ -2164,22 +2352,28 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     .sort((a, b) => String(b.transaction_date ?? "").localeCompare(String(a.transaction_date ?? "")));
   const visibleRecordCount = resource.key === "loans" ? filteredLoanGroups.length : filtered.length;
   async function markAsRead(row?: Row) {
-    if (!supabase || !online) return;
     setMarkingAll(true);
-    let query = supabase.from("notifications").update({ read_at: new Date().toISOString() }).eq("user_id", userId);
-    if (row) query = query.eq("id", row.id);
-    else query = query.is("read_at", null);
-    const { error } = await query;
-    setMarkingAll(false);
-    if (error) onToast(`Could not update notifications: ${error.message}`, true);
-    else { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "notifications"] }); onToast(row ? "Notification marked as read." : "Unread notifications marked as read."); }
+    try {
+      const affected = row ? [row] : (rows.data ?? []).filter((item) => !item.read_at);
+      const readAt = new Date().toISOString();
+      for (const notification of affected) {
+        await enqueueUpsert(userId, "notifications", { ...notification, read_at: readAt }, { onConflict: "id" });
+      }
+      const result = await syncQueuedChanges(userId);
+      await queryClient.invalidateQueries({ queryKey: ["rows", userId, "notifications"] });
+      onToast(savedLocallyMessage(row ? "Notification" : "Unread notifications", result));
+    } catch (error) {
+      onToast(`Could not update notifications: ${error instanceof Error ? error.message : "Local storage failed."}`, true);
+    } finally {
+      setMarkingAll(false);
+    }
   }
   return <div className="page">
-    <div className="title"><div><p className="eyebrow">{resource.table.replaceAll("_", " ").toUpperCase()}</p><h1>{resource.label}</h1><p>{resource.key === "tasks" ? "Keep work moving with clear priorities, categories, and due dates." : resource.key === "habits" ? "Build routines with your own colors, icons, and daily check-ins." : "Create, update, and remove your own records. Changes are saved to Supabase."}</p></div>
-      <button className="primary" disabled={!online} onClick={() => { setEditing(null); setDialog(true); }}><Plus size={16} /> Add {resource.label.replace(/s$/, "").toLowerCase()}</button></div>
+    <div className="title"><div><p className="eyebrow">{resource.table.replaceAll("_", " ").toUpperCase()}</p><h1>{resource.label}</h1><p>{resource.key === "tasks" ? "Keep work moving with clear priorities, categories, and due dates." : resource.key === "habits" ? "Build routines with your own colors, icons, and daily check-ins." : "Create, update, and remove your records. Changes save on this device and sync with Supabase when online."}</p></div>
+      <button className="primary" onClick={() => { setEditing(null); setDialog(true); }}><Plus size={16} /> Add {resource.label.replace(/s$/, "").toLowerCase()}</button></div>
     {rows.error && <ErrorState error={rows.error} onRetry={() => void rows.refetch()} />}
     {resource.key === "tasks" && <TaskInsights rows={rows.data ?? []} />}
-    {resource.key === "habits" ? <>{habitCompletions.error && <ErrorState error={habitCompletions.error} onRetry={() => void habitCompletions.refetch()} />}<HabitInsights habits={rows.data ?? []} completions={habitCompletions.data ?? []} loading={habitCompletions.isLoading} online={online} busy={toggleHabitCheckin.isPending} onToggleCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })} /></>
+    {resource.key === "habits" ? <>{habitCompletions.error && <ErrorState error={habitCompletions.error} onRetry={() => void habitCompletions.refetch()} />}<HabitInsights habits={rows.data ?? []} completions={habitCompletions.data ?? []} loading={habitCompletions.isLoading} busy={toggleHabitCheckin.isPending} onToggleCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })} /></>
       : resource.key === "nutrition_entries" ? <NutritionInsights rows={rows.data ?? []} />
         : resource.key !== "tasks" && !["personal_documents", "payment_cards"].includes(resource.key) && <RecordInsights resource={resource} rows={rows.data ?? []} />}
     {rows.isLoading ? <LoadingState /> : <section className="panel records-panel">
@@ -2194,24 +2388,19 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           {resource.key === "tasks" && <label className="filter-input task-filter"><span className="sr-only">Filter by status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{["todo", "in_progress", "done", "cancelled"].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></label>}
           {resource.key === "tasks" && <label className="filter-input task-filter"><span className="sr-only">Filter by category</span><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}><option value="all">All categories</option>{Object.keys(areaStyles).map((areaName) => <option key={areaName} value={areaName}>{areaName}</option>)}</select></label>}
           <label className="filter-input"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${resource.label.toLowerCase()}`} /></label></div></div>
-      {!visibleRecordCount ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored in your Supabase account."} action={!rows.data?.length && <button className="text-button" disabled={!online} onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
+      {!visibleRecordCount ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored on this device and synced to your Supabase account."} action={!rows.data?.length && <button className="text-button" onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
         : resource.key === "loans" ? <div className="record-list loan-person-list">{filteredLoanGroups.map((group) => <LoanGroupCard key={group.key} group={group} online={online}
           onViewTransactions={() => setViewingLoanGroup(group)}
-          onEdit={(row) => { setEditing(row); setDialog(true); }}
-          onDelete={(row) => setDeleting(row)} />)}</div>
-        : <div className={`record-list ${["personal_documents", "payment_cards"].includes(resource.key) ? "identity-record-list" : ""}`}>{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row} online={online}
+          onEdit={(row) => { setEditing(row); setDialog(true); }} />)}</div>
+        : <div className={`record-list ${["personal_documents", "payment_cards"].includes(resource.key) ? "identity-record-list" : ""}`}>{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row}
           linkedAccountName={(linkedAccounts.data ?? []).find((account) => account.id === row.account_id)?.name as string | undefined}
-          checkins={habitCompletions.data ?? []} checkinBusy={toggleHabitCheckin.isPending}
-          onToggleHabitCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })}
+          checkins={habitCompletions.data ?? []}
           onFieldChange={(field, value) => updateInlineField.mutate({ row, field, value })}
-          onEdit={() => { setEditing(row); setDialog(true); }} onDelete={() => setDeleting(row)} onPriorityChange={resource.key === "tasks" ? (priority) => changePriority.mutate({ row, priority }) : undefined} onMarkRead={resource.key === "notifications" && !row.read_at ? () => void markAsRead(row) : undefined} onCheckIn={resource.key === "habits" ? async () => {
-          if (!supabase || !online) { onToast("You are offline. The habit check-in was not saved.", true); return; }
-          const { error } = await supabase.from("habit_completions").upsert({ user_id: userId, habit_id: row.id, completed_on: today() }, { onConflict: "user_id,habit_id,completed_on" });
-          if (error) onToast(`Could not record habit check-in: ${error.message}`, true);
-          else { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "habit_completions"] }); onToast("Habit check-in saved."); }
+          onEdit={() => { setEditing(row); setDialog(true); }} onPriorityChange={resource.key === "tasks" ? (priority) => changePriority.mutate({ row, priority }) : undefined} onMarkRead={resource.key === "notifications" && !row.read_at ? () => void markAsRead(row) : undefined} onCheckIn={resource.key === "habits" ? async () => {
+          toggleHabitCheckin.mutate({ habitId: row.id, date: today(), checked: false });
         } : undefined} />)}</div>}
     </section>}
-    {dialog && <RecordDialog resource={resource} userId={userId} initial={editing} saving={save.isPending} onClose={() => { if (!save.isPending) { setDialog(false); setEditing(null); } }} onSave={(values) => save.mutate(values)} />}
+    {dialog && <RecordDialog resource={resource} userId={userId} initial={editing} saving={save.isPending} onClose={() => { if (!save.isPending) { setDialog(false); setEditing(null); } }} onSave={(values) => save.mutate(values)} onDelete={editing ? () => setDeleting(editing) : undefined} />}
     {deleting && <ConfirmDialog title={`Delete ${String(deleting[resource.display] ?? "record")}?`} detail="This cannot be undone. Related records may also be removed according to the database relationship." busy={remove.isPending} onCancel={() => setDeleting(null)} onConfirm={() => remove.mutate(deleting)} />}
     {viewingLoanGroup && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setViewingLoanGroup(null); }}>
       <section className="modal loan-transactions-modal" role="dialog" aria-modal="true" aria-labelledby="loan-transactions-title">
@@ -2230,11 +2419,11 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   </div>;
 }
 
-function InlineRecordField({ field, value, disabled, onChange }: { field: Field; value: unknown; disabled: boolean; onChange: (value: unknown) => void }) {
+function InlineRecordField({ field, value, disabled, onChange, className = "", showLabel = true }: { field: Field; value: unknown; disabled: boolean; onChange: (value: unknown) => void; className?: string; showLabel?: boolean }) {
   const [draft, setDraft] = useState(value === null || value === undefined ? "" : String(value));
   useEffect(() => setDraft(value === null || value === undefined ? "" : String(value)), [value]);
-  if (field.type === "select") return <label className="inline-record-field">
-    <small>{field.label}</small>
+  if (field.type === "select") return <label className={`inline-record-field ${className}`}>
+    {showLabel && <small>{field.label}</small>}
     <select value={String(value ?? "")} disabled={disabled} aria-label={field.label} onChange={(event) => onChange(event.target.value)}>
       {field.options?.map((option) => <option key={option} value={option}>{option.replaceAll("_", " ")}</option>)}
     </select>
@@ -2244,8 +2433,8 @@ function InlineRecordField({ field, value, disabled, onChange }: { field: Field;
     <input type="checkbox" checked={Boolean(value)} disabled={disabled} aria-label={field.label} onChange={(event) => onChange(event.target.checked)} />
   </label>;
   const required = field.required || field.name === "current_value";
-  return <label className="inline-record-field">
-    <small>{field.label}</small>
+  return <label className={`inline-record-field ${className}`}>
+    {showLabel && <small>{field.label}</small>}
     <input type="number" min={field.min} step="any" value={draft} required={required} disabled={disabled} aria-label={field.label}
       onChange={(event) => setDraft(event.target.value)}
       onBlur={(event) => {
@@ -2257,72 +2446,27 @@ function InlineRecordField({ field, value, disabled, onChange }: { field: Field;
   </label>;
 }
 
-function HabitRecordCalendar({ habit, checkins, online, busy, onToggle }: {
-  habit: Row; checkins: Row[]; online: boolean; busy: boolean;
-  onToggle: (habitId: string, date: string, checked: boolean) => void;
-}) {
-  const [open, setOpen] = useState(false);
-  const [month, setMonth] = useState(() => today().slice(0, 7));
-  const anchor = new Date(`${month}-01T12:00:00`);
-  const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
-  const gridStart = new Date(monthStart);
-  gridStart.setDate(gridStart.getDate() - ((gridStart.getDay() + 6) % 7));
-  const days = Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
-  const weekdayLabels = Array.from({ length: 7 }, (_, index) => new Date(2024, 0, index + 1).toLocaleDateString(undefined, { weekday: "short" }));
-  const shiftMonth = (amount: number) => setMonth(localDateKey(addMonths(anchor, amount)).slice(0, 7));
-  return <div className="habit-record-calendar">
-    <button className="text-button habit-record-calendar-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
-      <CalendarDays size={13} /> {open ? "Hide calendar" : "View check-in calendar"}
-    </button>
-    {open && <div className="habit-record-calendar-content">
-      <div className="habit-calendar-heading">
-        <div><h2>{String(habit.name)}</h2><p>Choose a day to view or change this habit’s check-in.</p></div>
-        <div className="habit-calendar-controls">
-          <button className="icon" aria-label="Previous month" onClick={() => shiftMonth(-1)}><ChevronLeft size={14} /></button>
-          <b>{anchor.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</b>
-          <button className="icon" aria-label="Next month" onClick={() => shiftMonth(1)}><ChevronRight size={14} /></button>
-        </div>
-      </div>
-      <div className="habit-calendar-grid" role="group" aria-label={`${String(habit.name)} check-in calendar`}>
-        {weekdayLabels.map((day) => <span className="calendar-weekday" key={day}>{day}</span>)}
-        {days.map((date) => {
-          const dateKey = localDateKey(date);
-          const checked = checkins.some((item) => item.habit_id === habit.id && item.completed_on === dateKey);
-          return <button key={dateKey}
-            className={`habit-calendar-day habit-record-calendar-day ${date.getMonth() !== anchor.getMonth() ? "outside-month" : ""} ${dateKey === today() ? "today-cell" : ""} ${checked ? "checked-day" : ""}`}
-            disabled={!online || busy || !habit.is_active || dateKey > today()}
-            onClick={() => {
-              if (date.getMonth() !== anchor.getMonth()) setMonth(dateKey.slice(0, 7));
-              onToggle(String(habit.id), dateKey, checked);
-            }}
-            aria-pressed={checked}
-            aria-label={`${date.toLocaleDateString()}, ${checked ? "checked in" : "not checked in"}`}>
-            <span>{date.getDate()}</span>{checked && <small>Done</small>}
-          </button>;
-        })}
-      </div>
-    </div>}
-  </div>;
-}
-
-function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMarkRead, onPriorityChange, onFieldChange, checkins = [], checkinBusy = false, onToggleHabitCheckin, linkedAccountName }: {
-  resource: Resource; row: Row; online: boolean; onEdit: () => void; onDelete: () => void; onCheckIn?: () => void;
+function RecordCard({ resource, row, onEdit, onCheckIn, onMarkRead, onPriorityChange, onFieldChange, checkins = [], linkedAccountName }: {
+  resource: Resource; row: Row; onEdit: () => void; onCheckIn?: () => void;
   onMarkRead?: () => void; onPriorityChange?: (priority: string) => void;
-  onFieldChange: (field: Field, value: unknown) => void; checkins?: Row[]; checkinBusy?: boolean;
-  onToggleHabitCheckin?: (habitId: string, date: string, checked: boolean) => void;
+  onFieldChange: (field: Field, value: unknown) => void; checkins?: Row[];
   linkedAccountName?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
-  const detailFields = resource.fields.filter((field) => ![resource.display, "icon", "color", "priority", "area"].includes(field.name) && row[field.name] !== null && row[field.name] !== undefined && row[field.name] !== "");
-  const inlineFields = resource.fields.filter((field) => ["select", "number", "checkbox"].includes(field.type ?? "") && field.name !== "priority");
+  const hiddenDetails = resource.key === "tasks" ? ["status", "recurrence", "description"] : [];
+  const detailFields = resource.fields.filter((field) => ![resource.display, "icon", "color", "priority", "area", ...hiddenDetails].includes(field.name) && row[field.name] !== null && row[field.name] !== undefined && row[field.name] !== "");
+  const quickFieldNames = resource.key === "tasks" ? ["status"] : resource.key === "goals" ? ["status", "current_value"] : [];
+  const quickFields = quickFieldNames.map((name) => resource.fields.find((field) => field.name === name))
+    .filter((field): field is Field => field !== undefined);
   const checkedToday = resource.key === "habits" && checkins.some((item) => item.habit_id === row.id && item.completed_on === today());
   const HabitIcon = habitIcons[String(row.icon)] ?? Flame;
   const area = typeof row.area === "string" ? areaStyles[row.area] : undefined;
   const AreaIcon = area?.icon;
   const isDocument = resource.key === "personal_documents";
   const isPaymentCard = resource.key === "payment_cards";
-  return <article className={`record-card ${isDocument ? "identity-document-card" : isPaymentCard ? "payment-card-record" : ""}`}>
+  const isCompleted = ["done", "completed"].includes(String(row.status ?? "").toLowerCase());
+  return <article className={`record-card record-${resource.key} ${isCompleted ? "record-completed" : ""} ${isDocument ? "identity-document-card" : isPaymentCard ? "payment-card-record" : ""}`}>
     {resource.key === "habits" ? <span className={`habit-icon habit-icon-large habit-color-${String(row.color ?? "violet")}`}><HabitIcon size={19} /></span>
       : resource.key === "tasks" ? <span className={`task-marker priority-${String(row.priority ?? "medium")}`} aria-hidden="true" /> : null}
     <div className="record-info">{isDocument ? <div className="identity-document-template">
@@ -2340,32 +2484,29 @@ function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMark
         <span><small>EXPIRES</small><b>{row.expiry_date ? configuredDate(String(row.expiry_date)) : "—"}</b></span></div>
       {linkedAccountName && <small className="payment-card-account">Linked to {linkedAccountName}</small>}
       <button className="payment-card-reveal" type="button" aria-label={`${revealed ? "Mask" : "Reveal"} last four card digits`} aria-pressed={revealed} onClick={() => setRevealed((value) => !value)}>{revealed ? <EyeOff size={13} /> : <Eye size={13} />}{revealed ? "Hide details" : "Reveal last four"}</button>
-    </div> : <><div className="record-heading"><h3>{displayValue(row[resource.display])}</h3>{row.status ? <span className="badge">{String(row.status).replaceAll("_", " ")}</span> : null}
-        {resource.key === "tasks" && typeof row.recurrence === "string" && row.recurrence !== "none" && <span className="badge">{row.recurrence}</span>}
-        {resource.key === "tasks" && typeof row.priority === "string" && <span className={`badge priority-badge priority-${row.priority}`}>{row.priority}</span>}
-        {area && AreaIcon && <span className={`category-badge ${area.className}`}><AreaIcon size={12} />{String(row.area)}</span>}
+    </div> : <><div className="record-heading"><h3>{displayValue(row[resource.display])}</h3>{row.status && !["tasks", "goals"].includes(resource.key) ? <span className="badge">{String(row.status).replaceAll("_", " ")}</span> : null}
+        {area && AreaIcon && !["tasks", "goals"].includes(resource.key) && <span className={`category-badge ${area.className}`}><AreaIcon size={12} />{String(row.area)}</span>}
       </div>
-      <div className="record-details">{(expanded ? detailFields : detailFields.slice(0, 4)).map((field) => <span key={field.name}><small>{field.label}</small>{field.sensitive ? maskedValue(row[field.name]) : displayValue(row[field.name])}</span>)}
+      {!["goals", "habits"].includes(resource.key) && <div className="record-details">{(expanded ? detailFields : detailFields.slice(0, 2)).map((field) => <span className={`record-detail-${field.name}`} key={field.name}><small>{field.label}</small>{resource.key === "tasks" && field.name === "due_date" && typeof row.due_date === "string" && !Number.isNaN(new Date(row.due_date).getTime()) ? `${configuredDate(row.due_date)} · ${configuredTime(row.due_date)}` : field.sensitive ? maskedValue(row[field.name]) : displayValue(row[field.name])}</span>)}
         {resource.key === "transactions" && row.type === "expense" && row.account_paid_amount !== undefined && Number(row.account_paid_amount) > 0
           && <span><small>Paid from account</small>{Number(row.account_paid_amount).toFixed(2)}</span>}
-        <small className="record-created">{row.updated_at && row.updated_at !== row.created_at ? `Updated ${configuredDate(String(row.updated_at))}` : row.created_at ? `Added ${configuredDate(String(row.created_at))}` : ""}</small></div>
-      {detailFields.length > 4 && <button className="text-button record-expand" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? "Show less" : `View all ${detailFields.length} details`}<ChevronDown className={expanded ? "record-expand-icon is-expanded" : "record-expand-icon"} size={13} /></button>}
-      {inlineFields.length > 0 && <div className="record-inline-fields">{inlineFields.map((field) => <InlineRecordField key={field.name} field={field} value={row[field.name]} disabled={!online} onChange={(value) => onFieldChange(field, value)} />)}</div>}
-      {resource.key === "habits" && onToggleHabitCheckin && <HabitRecordCalendar habit={row} checkins={checkins} online={online} busy={checkinBusy} onToggle={onToggleHabitCheckin} />}</>}
-    </div><div className="record-actions">{onCheckIn && <button className={`secondary check-in ${checkedToday ? "checked-in" : ""}`} disabled={checkedToday || !online} onClick={onCheckIn}>{checkedToday ? "Done today" : "Check in"}</button>}
-      {resource.key === "tasks" && onPriorityChange && <select className={`priority-select priority-${String(row.priority ?? "medium")}`} value={String(row.priority ?? "medium")} aria-label={`Set priority for ${String(row.title)}`} disabled={!online} onChange={(event) => onPriorityChange(event.target.value)}>{taskPriorities.map((priority) => <option key={priority} value={priority}>{priority[0].toUpperCase() + priority.slice(1)}</option>)}</select>}
-      {onMarkRead && <button className="secondary check-in" disabled={!online} onClick={onMarkRead}>Mark read</button>}
-      <button className="icon" aria-label={`Edit ${String(row[resource.display] ?? "record")}`} disabled={!online} onClick={onEdit}><Settings size={15} /></button>
-      <button className="icon danger-icon" aria-label={`Delete ${String(row[resource.display] ?? "record")}`} disabled={!online} onClick={onDelete}><Trash2 size={15} /></button>
+        <small className="record-created">{row.updated_at && row.updated_at !== row.created_at ? `Updated ${configuredDate(String(row.updated_at))}` : row.created_at ? `Added ${configuredDate(String(row.created_at))}` : ""}</small></div>}
+      {detailFields.length > 2 && !["goals", "habits"].includes(resource.key) && <button className="text-button record-expand" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? "Show less" : `View all ${detailFields.length} details`}<ChevronDown className={expanded ? "record-expand-icon is-expanded" : "record-expand-icon"} size={13} /></button>}</>}
+    </div><div className={`record-actions ${["tasks", "goals"].includes(resource.key) ? "record-actions-compact" : ""}`}><div className="record-action-stack">
+      {onCheckIn && <button className={`secondary check-in ${checkedToday ? "checked-in" : ""}`} disabled={checkedToday} onClick={onCheckIn}>{checkedToday ? "Done today" : "Check in"}</button>}
+      {resource.key === "tasks" && onPriorityChange && <select className={`priority-select priority-${String(row.priority ?? "medium")}`} value={String(row.priority ?? "medium")} aria-label={`Set priority for ${String(row.title)}`} onChange={(event) => onPriorityChange(event.target.value)}>{taskPriorities.map((priority) => <option key={priority} value={priority}>{priority[0].toUpperCase() + priority.slice(1)}</option>)}</select>}
+      {quickFields.map((field) => <InlineRecordField key={field.name} className={`quick-record-field quick-record-field-${field.name}`} field={field} value={row[field.name]} disabled={false} showLabel={false} onChange={(value) => onFieldChange(field, value)} />)}
+      {onMarkRead && <button className="secondary check-in" onClick={onMarkRead}>Mark read</button>}
+      </div>
+      <button className="icon" aria-label={`Edit ${String(row[resource.display] ?? "record")}`} onClick={onEdit}><Settings size={15} /></button>
     </div></article>;
 }
 
-function LoanGroupCard({ group, online, onViewTransactions, onEdit, onDelete }: {
+function LoanGroupCard({ group, online, onViewTransactions, onEdit }: {
   group: LoanGroup;
   online: boolean;
   onViewTransactions: () => void;
   onEdit: (row: Row) => void;
-  onDelete: (row: Row) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const amount = loanCurrency(group.outstandingAmount);
@@ -2382,14 +2523,13 @@ function LoanGroupCard({ group, online, onViewTransactions, onEdit, onDelete }: 
       {expanded && <div className="loan-person-entries">{group.entries.map((entry) => <div className="loan-entry" key={entry.id}>
         <div><b>{loanCurrency(Number(entry.amount ?? 0))}</b><small>{configuredDate(String(entry.loan_date ?? ""))}{entry.is_settled ? " · Settled" : ""}</small>
           {entry.notes !== null && entry.notes !== undefined && entry.notes !== "" && <small>{String(entry.notes)}</small>}</div>
-        <div className="inline-actions"><button className="secondary" disabled={!online} onClick={() => onEdit(entry)}>Edit</button>
-          <button className="secondary" disabled={!online} onClick={() => onDelete(entry)}>Delete</button></div>
+        <div className="inline-actions"><button className="secondary" disabled={!online} onClick={() => onEdit(entry)}>Edit</button></div>
       </div>)}</div>}
     </div>
   </article>;
 }
 
-function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void }) {
+function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDelete }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void; onDelete?: () => void }) {
   const formFields = fieldsForRecord(resource, Boolean(initial));
   const defaults = useMemo<Record<string, unknown>>(() => ({
     ...Object.fromEntries(resource.fields.map((field) => [field.name, defaultValue(field, initial?.[field.name])])),
@@ -2510,7 +2650,7 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
           <div className="form-grid">{optionalFields.map(renderField)}
           </div>
         </details>}
-        <div className="modal-actions"><button type="button" className="secondary" onClick={onClose} disabled={saving}>Cancel</button><button className="primary" type="submit" disabled={saving}>{saving ? "Saving…" : initial ? "Save changes" : `Save ${resource.label.replace(/s$/, "").toLowerCase()}`}</button></div>
+        <div className="modal-actions">{onDelete && <button type="button" className="danger-button record-delete-action" onClick={onDelete} disabled={saving}><Trash2 size={14} /> Delete</button>}<span className="modal-actions-spacer" /><button type="button" className="secondary" onClick={onClose} disabled={saving}>Cancel</button><button className="primary" type="submit" disabled={saving}>{saving ? "Saving…" : initial ? "Save changes" : `Save ${resource.label.replace(/s$/, "").toLowerCase()}`}</button></div>
       </form>
     </section>
   </div>;
@@ -2549,15 +2689,10 @@ function CalendarPage({ userId, onToast, online, weekStartsOn, openRequest, onQu
   }, [anchorDate, onQuickAddConsumed, openRequest, userId]);
   const addEvent = useMutation({
     mutationFn: async (values: Record<string, unknown>) => {
-      if (!online) throw new Error("You are offline. Calendar changes have not been saved.");
       const payload = cleanFormValues(values, resourceFor("calendar_events")!.fields);
-      const result = editing
-        ? await supabase!.from("calendar_events").update(payload).eq("id", editing.id).eq("user_id", userId)
-        : await supabase!.from("calendar_events").insert({ ...payload, user_id: userId });
-      const { error } = result;
-      if (error) throw error;
+      return saveQueuedRow(userId, "calendar_events", { ...payload, id: editing?.id ?? crypto.randomUUID() });
     },
-    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "calendar_events"] }); setDialog(false); setEditing(null); setEventDraft(null); onToast("Calendar event saved."); },
+    onSuccess: async (result) => { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "calendar_events"] }); setDialog(false); setEditing(null); setEventDraft(null); onToast(savedLocallyMessage("Calendar event", result)); },
     onError: (error) => onToast(`Could not save event: ${error.message}`, true),
   });
   const anchor = new Date(`${anchorDate}T12:00:00`);
@@ -2609,12 +2744,8 @@ function CalendarPage({ userId, onToast, online, weekStartsOn, openRequest, onQu
   const gridEvents = expandCalendarEvents(events.data ?? [], visibleStart, visibleEnd)
     .filter((event) => area === "all" || event.area === area);
   const remove = useMutation({
-    mutationFn: async (row: Row) => {
-      if (!online) throw new Error("You are offline. The event was not deleted.");
-      const { error } = await supabase!.from("calendar_events").delete().eq("id", row.id).eq("user_id", userId);
-      if (error) throw error;
-    },
-    onSuccess: async () => { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "calendar_events"] }); setDeleting(null); onToast("Event deleted."); },
+    mutationFn: async (row: Row) => deleteQueuedRow(userId, "calendar_events", row.id),
+    onSuccess: async (result) => { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "calendar_events"] }); setDeleting(null); setDialog(false); setEditing(null); onToast(savedLocallyMessage("Event deleted", result)); },
     onError: (error) => onToast(`Could not delete event: ${error.message}`, true),
   });
   const eventResource = resourceFor("calendar_events")!;
@@ -2623,7 +2754,7 @@ function CalendarPage({ userId, onToast, online, weekStartsOn, openRequest, onQu
     : period === "day" ? anchor.toLocaleDateString(undefined, { weekday: "long", month: "long", day: "numeric", year: "numeric" })
       : period === "week" ? `${configuredDate(weekStart)} – ${configuredDate(new Date(weekStart.getFullYear(), weekStart.getMonth(), weekStart.getDate() + 6))}`
         : "All events";
-  return <div className="page"><div className="title"><div><p className="eyebrow">YOUR PERSONAL SCHEDULE</p><h1>Calendar</h1><p>Events are stored in Supabase and remain private to your account.</p></div><button className="primary" disabled={!online} onClick={() => openNewEvent(anchorDate)}><Plus size={16} /> Add event</button></div>
+  return <div className="page"><div className="title"><div><p className="eyebrow">YOUR PERSONAL SCHEDULE</p><h1>Calendar</h1><p>Events are stored on this device first, then synced to your private Supabase account when online.</p></div><button className="primary" disabled={!online} onClick={() => openNewEvent(anchorDate)}><Plus size={16} /> Add event</button></div>
     {events.error && <ErrorState error={events.error} onRetry={() => void events.refetch()} />}
     <section className="panel"><div className="calendar-toolbar"><div className="calendar-controls"><div className="view-tabs" role="group" aria-label="Calendar period">{(["agenda", "day", "week", "month"] as const).map((view) => <button key={view} className={period === view ? "selected" : ""} onClick={() => setPeriod(view)}>{view[0].toUpperCase() + view.slice(1)}</button>)}</div>
         <div className="calendar-date"><button className="icon" aria-label="Previous period" onClick={() => shiftDate(-1)}><ChevronLeft size={15} /></button><b>{periodLabel}</b><button className="icon" aria-label="Next period" onClick={() => shiftDate(1)}><ChevronRight size={15} /></button></div>
@@ -2644,11 +2775,10 @@ function CalendarPage({ userId, onToast, online, weekStartsOn, openRequest, onQu
       {events.isLoading ? <LoadingState /> : filtered.length ? <div className="record-list">{filtered.map((event) => <article className="record-card calendar-event" key={String(event.occurrence_key)}>
         <time className="event-date"><b>{new Date(String(event.starts_at)).toLocaleDateString(undefined, { day: "2-digit" })}</b><small>{new Date(String(event.starts_at)).toLocaleDateString(undefined, { month: "short" })}</small></time>
         <div className="record-info"><div className="record-heading"><h3>{String(event.title)}</h3><span className="badge">{String(event.area)}</span></div><div className="record-details"><span><small>Starts</small>{new Date(String(event.starts_at)).toLocaleString()}</span>{event.ends_at ? <span><small>Ends</small>{new Date(String(event.ends_at)).toLocaleString()}</span> : null}{event.description ? <span><small>Details</small>{String(event.description)}</span> : null}{event.recurrence !== "none" ? <span><small>Repeats</small>{String(event.recurrence)}</span> : null}</div></div>
-        <div className="record-actions"><button className="icon" aria-label={`Edit ${String(event.title)}`} disabled={!online} onClick={() => { setEditing(events.data?.find((item) => item.id === event.id) ?? event); setEventDraft(null); setDialog(true); }}><Settings size={15} /></button>
-          <button className="icon danger-icon" aria-label={`Delete ${String(event.title)}`} disabled={!online} onClick={() => setDeleting(events.data?.find((item) => item.id === event.id) ?? event)}><Trash2 size={15} /></button></div>
+        <div className="record-actions"><button className="icon" aria-label={`Edit ${String(event.title)}`} disabled={!online} onClick={() => { setEditing(events.data?.find((item) => item.id === event.id) ?? event); setEventDraft(null); setDialog(true); }}><Settings size={15} /></button></div>
       </article>)}</div> : <EmptyState title="No events in this view" detail="Create an event or adjust the date range and area filter." action={<button className="text-button" disabled={!online} onClick={() => openNewEvent(anchorDate)}><Plus size={14} /> Add event</button>} />}
     </section>
-    {dialog && <RecordDialog resource={eventResource} userId={userId} initial={editing ?? eventDraft} saving={addEvent.isPending} onClose={() => { setDialog(false); setEditing(null); setEventDraft(null); }} onSave={(values) => addEvent.mutate(values)} />}
+    {dialog && <RecordDialog resource={eventResource} userId={userId} initial={editing ?? eventDraft} saving={addEvent.isPending} onClose={() => { setDialog(false); setEditing(null); setEventDraft(null); }} onSave={(values) => addEvent.mutate(values)} onDelete={editing ? () => setDeleting(editing) : undefined} />}
     {deleting && <ConfirmDialog title={`Delete ${String(deleting.title)}?`} detail={deleting.recurrence !== "none" ? "This deletes the recurring event series and its future occurrences." : "This calendar event will be permanently removed."} busy={remove.isPending} onCancel={() => setDeleting(null)} onConfirm={() => remove.mutate(deleting)} />}
   </div>;
 }
@@ -2672,6 +2802,9 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
   const [journalBook, setJournalBook] = useState<JournalBookSettings>(() => readJournalBookSettings(preferences?.journal_book_settings));
   const [chatId, setChatId] = useState("");
   const [telegramEnabled, setTelegramEnabled] = useState(false);
+  const [deviceNotificationsEnabled, setDeviceNotificationsEnabled] = useState(
+    localStorage.getItem(`lifeos-device-notifications-enabled:${userId}`) === "true",
+  );
   const [confirmDeleteAccount, setConfirmDeleteAccount] = useState(false);
   const [deletingAccount, setDeletingAccount] = useState(false);
   const notificationPrefs = useRows("notification_preferences", userId);
@@ -2700,6 +2833,7 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
   useEffect(() => {
     let active = true;
     if (!avatarPath) { setAvatarPreview(""); return; }
+    if (!navigator.onLine) { setAvatarPreview(""); return; }
     void supabase!.storage.from("lifeos-private").createSignedUrl(avatarPath, 3600).then(({ data, error }) => {
       if (active && !error) setAvatarPreview(data.signedUrl);
     });
@@ -2709,40 +2843,33 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
   async function saveProfile(event: FormEvent) {
     event.preventDefault();
     if (!supabase) return;
-    const { error } = await supabase.from("profiles").upsert({ user_id: userId, display_name: name.trim(), timezone, avatar_url: avatarPath || null }, { onConflict: "user_id" });
-    if (error) onToast(`Could not save profile: ${error.message}`, true);
-    else { await queryClient.invalidateQueries({ queryKey: ["profile", userId] }); onToast("Profile saved."); }
+    try {
+      const result = await saveQueuedRow(userId, "profiles", { display_name: name.trim(), timezone, avatar_url: avatarPath || null }, { onConflict: "user_id", cacheId: userId });
+      await queryClient.invalidateQueries({ queryKey: ["profile", userId] });
+      onToast(savedLocallyMessage("Profile", result));
+    } catch (error) { onToast(`Could not save profile: ${error instanceof Error ? error.message : "Local storage failed."}`, true); }
   }
   async function savePreferences(event: FormEvent) {
     event.preventDefault();
-    const { error } = await supabase!.from("user_preferences").upsert({
-      user_id: userId,
-      currency: currencyCode.trim().toUpperCase(),
-      date_format: dateFormat,
-      week_starts_on: Number(weekStartsOn),
-      time_format: timeFormat,
-      accent_color: accentColor,
-    }, { onConflict: "user_id" });
-    if (error) onToast(`Could not save preferences: ${error.message}`, true);
-    else {
+    try {
+      const result = await saveQueuedRow(userId, "user_preferences", {
+        currency: currencyCode.trim().toUpperCase(), date_format: dateFormat,
+        week_starts_on: Number(weekStartsOn), time_format: timeFormat, accent_color: accentColor,
+      }, { onConflict: "user_id", cacheId: userId });
       document.documentElement.style.setProperty("--user-accent", accentColor);
       await queryClient.invalidateQueries({ queryKey: ["preferences", userId] });
-      onToast("Preferences saved.");
-    }
+      onToast(savedLocallyMessage("Preferences", result));
+    } catch (error) { onToast(`Could not save preferences: ${error instanceof Error ? error.message : "Local storage failed."}`, true); }
   }
   async function saveJournalPreferences(event: FormEvent) {
     event.preventDefault();
-    const { error } = await supabase!.from("user_preferences").upsert({
-      user_id: userId,
-      journal_theme: journalTheme,
-      journal_data_types: journalTypes,
-      journal_book_settings: journalBook,
-    }, { onConflict: "user_id" });
-    if (error) onToast(`Could not save journal settings: ${error.message}`, true);
-    else {
+    try {
+      const result = await saveQueuedRow(userId, "user_preferences", {
+        journal_theme: journalTheme, journal_data_types: journalTypes, journal_book_settings: journalBook,
+      }, { onConflict: "user_id", cacheId: userId });
       await queryClient.invalidateQueries({ queryKey: ["preferences", userId] });
-      onToast("Journal settings saved.");
-    }
+      onToast(savedLocallyMessage("Journal settings", result));
+    } catch (error) { onToast(`Could not save journal settings: ${error instanceof Error ? error.message : "Local storage failed."}`, true); }
   }
   async function updateBrowserNotifications(enabled: boolean) {
     if (enabled && !("Notification" in window)) { onToast("This browser does not support notifications.", true); return; }
@@ -2750,20 +2877,62 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
       const permission = await Notification.requestPermission();
       if (permission !== "granted") { onToast("Browser notification permission was not granted.", true); return; }
     }
-    const { error } = await supabase!.from("notification_preferences").upsert({ user_id: userId, browser_enabled: enabled }, { onConflict: "user_id" });
-    if (error) onToast(`Could not save notification preference: ${error.message}`, true);
-    else { setBrowserEnabled(enabled); await queryClient.invalidateQueries({ queryKey: ["rows", userId, "notification_preferences"] }); onToast(enabled ? "Browser notifications enabled." : "Browser notifications disabled."); }
+    try {
+      const result = await saveQueuedRow(userId, "notification_preferences", { browser_enabled: enabled }, { onConflict: "user_id", cacheId: userId });
+      setBrowserEnabled(enabled);
+      await queryClient.invalidateQueries({ queryKey: ["rows", userId, "notification_preferences"] });
+      onToast(savedLocallyMessage(enabled ? "Browser notifications enabled" : "Browser notifications disabled", result));
+    } catch (error) { onToast(`Could not save notification preference: ${error instanceof Error ? error.message : "Local storage failed."}`, true); }
+  }
+  async function updateDeviceNotifications(enabled: boolean) {
+    if (enabled && !Capacitor.isNativePlatform()) {
+      onToast("Device notifications are available in the Android app.", true);
+      return;
+    }
+    if (enabled) {
+      try {
+        if (!await requestDeviceNotificationPermission()) {
+          onToast("Android notification permission was not granted. Enable it in system settings to receive reminders.", true);
+          return;
+        }
+      } catch (error) {
+        onToast(`Could not request notification permission: ${error instanceof Error ? error.message : "Unknown error."}`, true);
+        return;
+      }
+    }
+    localStorage.setItem(`lifeos-device-notifications-enabled:${userId}`, String(enabled));
+    setDeviceNotificationsEnabled(enabled);
+    window.dispatchEvent(new CustomEvent("lifeos-device-notifications-changed", { detail: { userId } }));
+    onToast(enabled ? "On-device reminders enabled." : "On-device reminders disabled.");
+  }
+  async function sendDeviceTestNotification() {
+    try {
+      if (!await requestDeviceNotificationPermission()) {
+        onToast("Android notification permission was not granted.", true);
+        return;
+      }
+      await LocalNotifications.schedule({ notifications: [{
+        id: Math.floor(Date.now() % 2_000_000_000) + 1,
+        title: "LifeOS",
+        body: "On-device notifications are working.",
+        schedule: { at: new Date(Date.now() + 1000) },
+      }] });
+      onToast("A test notification will appear shortly.");
+    } catch (error) { onToast(`Could not schedule test notification: ${error instanceof Error ? error.message : "Unknown error."}`, true); }
   }
   async function saveTelegram(event: FormEvent) {
     event.preventDefault();
-    const { error } = await supabase!.from("telegram_connections").upsert({ user_id: userId, chat_id: chatId.trim(), is_enabled: telegramEnabled }, { onConflict: "user_id" });
-    if (error) onToast(`Could not save Telegram settings: ${error.message}`, true);
-    else { await queryClient.invalidateQueries({ queryKey: ["rows", userId, "telegram_connections"] }); onToast("Telegram connection settings saved. Sending still requires the Edge Function and bot secret."); }
+    try {
+      const result = await saveQueuedRow(userId, "telegram_connections", { chat_id: chatId.trim(), is_enabled: telegramEnabled }, { onConflict: "user_id", cacheId: userId });
+      await queryClient.invalidateQueries({ queryKey: ["rows", userId, "telegram_connections"] });
+      onToast(`${savedLocallyMessage("Telegram connection settings", result)} Sending still requires the Edge Function and bot secret.`);
+    } catch (error) { onToast(`Could not save Telegram settings: ${error instanceof Error ? error.message : "Local storage failed."}`, true); }
   }
   async function uploadAvatar(event: ChangeEvent<HTMLInputElement>) {
     const input = event.currentTarget;
     const file = input.files?.[0];
     if (!file) return;
+    if (!navigator.onLine) { onToast("Profile photo upload requires an internet connection.", true); input.value = ""; return; }
     if (!["image/jpeg", "image/png", "image/webp"].includes(file.type) || file.size > 5 * 1024 * 1024) {
       onToast("Choose a JPEG, PNG, or WebP image smaller than 5 MB.", true);
       input.value = "";
@@ -2774,16 +2943,25 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
     const { error: uploadError } = await supabase!.storage.from("lifeos-private").upload(path, file, { upsert: true, contentType: file.type });
     if (uploadError) { onToast(`Could not upload profile photo: ${uploadError.message}`, true); input.value = ""; return; }
     setAvatarPath(path);
-    const { error: profileError } = await supabase!.from("profiles").upsert({ user_id: userId, avatar_url: path }, { onConflict: "user_id" });
-    if (profileError) onToast(`Photo uploaded but profile could not be updated: ${profileError.message}`, true);
-    else { await queryClient.invalidateQueries({ queryKey: ["profile", userId] }); onToast("Profile photo saved privately."); }
+    try {
+      const result = await saveQueuedRow(userId, "profiles", { avatar_url: path }, { onConflict: "user_id", cacheId: userId });
+      await queryClient.invalidateQueries({ queryKey: ["profile", userId] });
+      onToast(savedLocallyMessage("Profile photo", result));
+    } catch (error) { onToast(`Photo uploaded but profile could not be updated: ${error instanceof Error ? error.message : "Local storage failed."}`, true); }
     input.value = "";
   }
   async function sendTestNotification() {
+    if (!navigator.onLine) { onToast("Telegram test notifications require an internet connection.", true); return; }
     if (!supabase || !telegram.data?.[0]?.chat_id) { onToast("Save a Telegram chat ID first.", true); return; }
-    const { data: notification, error: createError } = await supabase.from("notifications").insert({ user_id: userId, title: "LifeOS test notification", body: "Your Telegram connection is configured.", type: "integration_test" }).select("id").single();
-    if (createError) { onToast(`Could not create test notification: ${createError.message}`, true); return; }
-    const { error } = await supabase.functions.invoke("telegram-notify", { body: { notification_id: notification.id } });
+    const notificationId = crypto.randomUUID();
+    const result = await saveQueuedRow(userId, "notifications", {
+      id: notificationId, title: "LifeOS test notification", body: "Your Telegram connection is configured.", type: "integration_test",
+    });
+    if (result.error || result.remaining) {
+      onToast(savedLocallyMessage("Test notification", result), true);
+      return;
+    }
+    const { error } = await supabase.functions.invoke("telegram-notify", { body: { notification_id: notificationId } });
     if (error) onToast(`Telegram test failed: ${error.message}`, true);
     else onToast("Telegram test notification sent.");
   }
@@ -2815,6 +2993,7 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
   }
   async function deleteAccount() {
     if (deletingAccount) return;
+    if (!navigator.onLine) { onToast("Account deletion requires an internet connection.", true); return; }
     setDeletingAccount(true);
     const { error } = await supabase!.functions.invoke("delete-account");
     if (error) onToast(`Account deletion is not configured: ${error.message}`, true);
@@ -2860,10 +3039,12 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
           <fieldset className="journal-data-options"><legend>Automatically include</legend>{journalDataTypes.map((item) => <label className="journal-data-option" key={item.key}><span>{item.label}</span><input type="checkbox" checked={journalTypes.includes(item.key)} onChange={(event) => setJournalTypes((current) => event.target.checked ? [...current, item.key] : current.filter((key) => key !== item.key))} /></label>)}</fieldset>
           <p className="muted">Profile details are private to your account. Activity is shown from its original records and updates automatically; the e-book includes only activity types selected above.</p>
           <button className="primary" type="submit">Save journal settings</button></form></section>
-      <section className="panel"><PanelHeading title="Notifications" detail="Browser permission is requested only when enabled" />
+      <section className="panel"><PanelHeading title="Notifications" detail="On-device reminders run locally, including when you are offline." />
+        {Capacitor.isNativePlatform() && <><label className="toggle-row"><span><b>On-device reminders</b><small>Schedule tasks, events, bills, habits, and saved reminders on this phone</small></span><input type="checkbox" checked={deviceNotificationsEnabled} onChange={(event) => void updateDeviceNotifications(event.target.checked)} /></label>
+          <button className="secondary" disabled={!deviceNotificationsEnabled} onClick={() => void sendDeviceTestNotification()}>Send device test</button></>}
         <label className="toggle-row"><span><b>Browser notifications</b><small>Allow notifications from this browser</small></span><input type="checkbox" checked={browserEnabled} onChange={(event) => void updateBrowserNotifications(event.target.checked)} /></label>
         <button className="secondary" disabled={!browserEnabled} onClick={sendBrowserTest}>Send browser test</button>
-        <p className="muted">In-app notification history is available in the Notifications module. Scheduled delivery requires a deployed scheduler.</p></section>
+        <p className="muted">In-app notification history is available in the Notifications module. Android reminders are scheduled from data saved on this device.</p></section>
       <section className="panel"><PanelHeading title="Telegram integration" detail="Only the chat ID is stored in this database; bot tokens stay server-side." />
         <form className="settings-form" onSubmit={(event) => void saveTelegram(event)}><label>Telegram Chat ID<input value={chatId} onChange={(event) => setChatId(event.target.value)} required /></label>
           <label className="toggle-row"><span><b>Enable reminders</b><small>Uses a secured Supabase Edge Function</small></span><input type="checkbox" checked={telegramEnabled} onChange={(event) => setTelegramEnabled(event.target.checked)} /></label>
@@ -2872,8 +3053,8 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
       <section className="panel"><PanelHeading title="Export your data" detail="Download records owned by your account as JSON or CSV." />
         <button className="secondary export-all" onClick={() => void exportAllData()}><Download size={15} /> Export all records as JSON</button>
         <div className="export-list">{["tasks", "transactions", "journal_entries", "calendar_events", "goals"].map((table) => <button className="export-link" key={table} onClick={() => void exportTable(table)}><Download size={15} />{resourceLabel(table)}<span>CSV</span></button>)}</div></section>
-      <section className="panel"><PanelHeading title="Connection status" detail="Supabase Authentication and database are configured" />
-        <div className="integration-row"><span className="status-dot" />Supabase connected</div><div className="integration-row"><span className={`status-dot ${telegram.data?.[0]?.is_enabled ? "" : "muted-dot"}`} />Telegram {telegram.data?.[0]?.is_enabled ? "enabled; delivery needs deployed function" : "not enabled"}</div>
+      <section className="panel"><PanelHeading title="Connection status" detail="Local changes sync to Supabase when an internet connection is available." />
+        <div className="integration-row"><span className={`status-dot ${navigator.onLine ? "" : "muted-dot"}`} />Supabase {navigator.onLine ? "online" : "offline; changes are saved locally"}</div><div className="integration-row"><span className={`status-dot ${telegram.data?.[0]?.is_enabled ? "" : "muted-dot"}`} />Telegram {telegram.data?.[0]?.is_enabled ? "enabled; delivery needs deployed function" : "not enabled"}</div>
         <div className="integration-row"><span className={`status-dot ${navigator.onLine ? "" : "muted-dot"}`} />Browser {navigator.onLine ? "online" : "offline"}</div></section>
       <section className="panel panel-danger"><PanelHeading title="Account" detail="Sign out or request permanent account deletion." /><div className="inline-actions"><button className="secondary" onClick={onSignOut}><LogOut size={15} /> Sign out</button><button className="danger-button" onClick={() => setConfirmDeleteAccount(true)}><Trash2 size={15} /> Delete account</button></div><p className="muted">Account deletion requires the secured <code>delete-account</code> Edge Function.</p></section>
     </div>
@@ -2899,13 +3080,17 @@ function OnboardingDialog({ userId, profile, onDone, onToast }: { userId: string
     if (!supabase || saving) return;
     setSaving(true);
     try {
-      const [profileResult, preferenceResult] = await Promise.all([
-        supabase.from("profiles").upsert({ user_id: userId, display_name: name.trim(), timezone, personal_goals: personal, fitness_goals: fitness, financial_goals: financial, onboarding_complete: true }, { onConflict: "user_id" }),
-        supabase.from("user_preferences").upsert({ user_id: userId, currency: currencyCode.toUpperCase(), theme: "system" }, { onConflict: "user_id" }),
-      ]);
-      if (profileResult.error) throw profileResult.error;
-      if (preferenceResult.error) throw preferenceResult.error;
-      onToast("Welcome to LifeOS. Your profile is ready."); onDone();
+      await enqueueUpsert(userId, "profiles", {
+        display_name: name.trim(), timezone, personal_goals: personal, fitness_goals: fitness,
+        financial_goals: financial, onboarding_complete: true,
+      }, { onConflict: "user_id", cacheId: userId });
+      await enqueueUpsert(userId, "user_preferences", {
+        currency: currencyCode.toUpperCase(), theme: "system",
+      }, { onConflict: "user_id", cacheId: userId });
+      const result = navigator.onLine ? await syncAfterLocalWrite(supabase, userId)
+        : { remaining: await countPendingMutations(userId), error: null };
+      onToast(savedLocallyMessage("Welcome to LifeOS. Your profile", result));
+      onDone();
     } catch (error) { onToast(`Could not complete setup: ${error instanceof Error ? error.message : "Unknown error."}`, true); }
     finally { setSaving(false); }
   }

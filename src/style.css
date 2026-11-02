@@ -191,6 +191,9 @@ svg{flex-shrink:0}
 .record-card:nth-child(4){animation-delay:75ms}
 .record-card:nth-child(5){animation-delay:100ms}
 .record-card:last-child{border-bottom:0}
+.record-card.record-completed{background:color-mix(in srgb,var(--success) 7%,var(--panel))}
+.record-card.record-completed .record-heading h3{color:var(--success)}
+.record-card.record-completed .badge{background:color-mix(in srgb,var(--success) 12%,var(--panel));color:var(--success)}
 .record-info{min-width:0;flex:1}
 .record-heading{display:flex;align-items:center;gap:9px;flex-wrap:wrap}
 .record-heading h3{margin:0;font-size:12px;font-weight:650;overflow-wrap:anywhere}
@@ -198,6 +201,12 @@ svg{flex-shrink:0}
 .record-details>span{display:grid;gap:3px;max-width:260px;overflow-wrap:anywhere;color:var(--muted);font-size:9px}
 .record-details>span small,.record-created{color:var(--muted);font-size:9px}
 .record-actions{display:flex;align-items:center;gap:6px;flex:0 0 auto}
+.record-action-stack{display:contents}
+.record-actions.record-actions-compact{flex-wrap:nowrap}
+.record-actions .quick-record-field{min-width:78px;max-width:94px;gap:2px}
+.record-actions .quick-record-field select,.record-actions .quick-record-field input:not([type=checkbox]){width:100%;min-height:29px;padding:4px 6px;border:1px solid var(--line);border-radius:7px;background:var(--panel);color:var(--text);font-size:9px}
+.record-actions .quick-record-field-current_value{min-width:96px;max-width:108px}
+.record-actions .quick-record-field-current_value input{font-variant-numeric:tabular-nums}
 .check-in{min-height:29px;padding:5px 8px;font-size:9px}
 .checked-in{color:var(--success);border-color:#a9d8c8}
 .record-created{margin-left:auto}
@@ -294,7 +303,6 @@ svg{flex-shrink:0}
 .habit-calendar-list{display:grid}
 .habit-calendar-row{display:flex;align-items:center;gap:9px;min-height:47px;border-top:1px solid var(--line);font-size:10px}
 .habit-calendar-row>span:nth-child(2){flex:1;min-width:0;overflow-wrap:anywhere}
-.record-inline-fields{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin-top:9px;padding:8px;border-radius:8px;background:var(--bg)}
 .inline-record-field{display:flex;flex-direction:column;gap:4px;min-width:88px;max-width:170px;color:var(--muted);font-size:9px}
 .inline-record-field small{font-size:8px}
 .inline-record-field input:not([type=checkbox]),.inline-record-field select{width:100%;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:9px}
@@ -620,13 +628,28 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
   .records-toolbar>.inline-actions,.records-toolbar>.filter-input{width:100%}
   .records-toolbar>.inline-actions .filter-input{flex:1}
   .record-list{padding:0 11px}
-  .record-card{align-items:flex-start;gap:8px;padding:12px 0}
-  .record-actions{gap:4px}
-  .record-actions .icon{width:29px;height:29px}
-  .record-details{gap:8px}
-  .record-details>span{font-size:8px;max-width:180px}
+  .record-list:not(.identity-record-list) .record-card{display:grid;grid-template-columns:16px minmax(0,1fr) 82px;align-items:start;gap:5px;padding:5px 0}
+  .record-list:not(.identity-record-list) .record-card:has(> .habit-icon){grid-template-columns:35px minmax(0,1fr) 82px}
+  .record-list:not(.identity-record-list) .record-card:has(> .record-info:first-child){grid-template-columns:minmax(0,1fr) 82px}
+  .record-list:not(.identity-record-list) .record-info{min-width:0}
+  .record-list:not(.identity-record-list) .record-heading{gap:5px}
+  .record-list:not(.identity-record-list) .record-heading h3{font-size:11px;line-height:1.25}
+  .record-list:not(.identity-record-list) .record-details{gap:3px 8px;margin-top:4px}
+  .record-list:not(.identity-record-list) .record-details>span{display:inline-flex;align-items:baseline;gap:4px;max-width:100%;overflow:hidden;font-size:8px;white-space:nowrap;text-overflow:ellipsis}
+  .record-list:not(.identity-record-list) .record-details>span small{flex:0 0 auto;font-size:8px}
+  .record-list:not(.identity-record-list) .record-tasks .record-detail-due_date{font-size:7px;color:var(--muted)}
+  .record-list:not(.identity-record-list) .record-tasks .record-detail-due_date small{font-size:7px}
+  .record-list:not(.identity-record-list) .record-actions{display:grid;width:82px;grid-template-columns:minmax(0,1fr) 24px;align-items:center;gap:2px 4px}
+  .record-list:not(.identity-record-list) .record-action-stack{display:flex;min-width:0;flex-direction:column;gap:2px}
+  .record-list:not(.identity-record-list) .record-actions .icon{grid-column:2;grid-row:1;width:24px;height:24px;align-self:center}
+  .record-list:not(.identity-record-list) .record-actions .check-in{min-height:24px;padding:2px 5px;font-size:8px}
+  .record-list:not(.identity-record-list) .record-actions .priority-select{width:100%;min-width:0;min-height:24px;padding:2px 5px;font-size:9px}
+  .record-list:not(.identity-record-list) .record-actions .quick-record-field,
+  .record-list:not(.identity-record-list) .record-actions .quick-record-field-current_value{width:100%;min-width:0;max-width:none}
+  .record-list:not(.identity-record-list) .record-actions .quick-record-field select,
+  .record-list:not(.identity-record-list) .record-actions .quick-record-field input:not([type=checkbox]){min-height:24px;padding:2px 5px;font-size:9px}
+  .record-list:not(.identity-record-list) .record-actions-compact{width:82px;flex-wrap:nowrap}
   .record-created{display:none}
-  .priority-select{min-width:72px}
   .journal-book{grid-template-columns:36px minmax(0,1fr);min-height:0}
   .journal-spine{padding:14px 5px}
   .journal-paper{padding:12px}
@@ -667,9 +690,6 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
   .inline-actions{align-items:stretch}
   .calendar-cell{min-height:54px}
   .calendar-cell-events>small{font-size:7px}
-  .record-card{flex-wrap:wrap}
-  .record-info{flex:1 1 calc(100% - 50px)}
-  .record-actions{width:100%;justify-content:flex-end;flex-wrap:wrap}
   .habit-calendar-grid>.calendar-weekday{font-size:7px}
   .habit-calendar-day{min-height:43px}
   .habit-calendar-day small{max-width:36px}
