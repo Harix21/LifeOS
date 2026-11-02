@@ -205,6 +205,43 @@ svg{flex-shrink:0}
 .record-expand-icon{transition:transform .16s ease}
 .record-expand-icon.is-expanded{transform:rotate(180deg)}
 .record-details>span{animation:record-enter .18s ease both}
+.identity-record-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:14px;padding:16px}
+.identity-record-list .record-card{display:flex;flex-direction:column;align-items:stretch;gap:0;overflow:hidden;padding:0;border:1px solid var(--line);border-radius:13px;background:var(--panel);transform:none}
+.identity-record-list .record-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px #101c3212}
+.identity-record-list .record-info{width:100%;flex:1}
+.identity-record-list .record-actions{justify-content:flex-end;padding:8px 12px;border-top:1px solid var(--line);background:var(--bg)}
+.identity-document-template{display:grid;gap:15px;min-height:235px;padding:17px;background:linear-gradient(145deg,color-mix(in srgb,var(--accent) 8%,var(--panel)),var(--panel) 70%);color:var(--text)}
+.identity-template-top{display:flex;align-items:center;justify-content:space-between}
+.identity-template-icon{display:grid;place-items:center;width:34px;height:34px;border:1px solid color-mix(in srgb,var(--accent) 24%,var(--line));border-radius:10px;background:color-mix(in srgb,var(--accent) 10%,var(--panel));color:var(--accent)}
+.identity-type-label{padding:5px 8px;border:1px solid var(--line);border-radius:20px;color:var(--muted);font-size:9px;font-weight:700;text-transform:uppercase;letter-spacing:.6px}
+.identity-document-title{display:grid;gap:4px}
+.identity-document-title h3,.payment-card-template h3{margin:0;font-size:14px;font-weight:700;overflow-wrap:anywhere}
+.identity-document-title>span{color:var(--muted);font-size:10px}
+.identity-sensitive-line{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:10px 0;border-top:1px dashed var(--line);border-bottom:1px dashed var(--line)}
+.identity-sensitive-line>div,.identity-document-meta>span{display:grid;gap:5px;min-width:0}
+.identity-sensitive-line small,.identity-document-meta small{color:var(--muted);font-size:8px;text-transform:uppercase;letter-spacing:.55px}
+.identity-sensitive-line b{overflow-wrap:anywhere;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;letter-spacing:.35px}
+.reveal-sensitive{display:flex;align-items:center;gap:5px;flex:none;font-size:9px}
+.identity-document-meta{display:grid;grid-template-columns:1fr 1fr;gap:12px}
+.identity-document-meta b{overflow:hidden;color:var(--text);font-size:10px;text-overflow:ellipsis;white-space:nowrap}
+.payment-card-template{position:relative;display:grid;gap:15px;min-height:235px;overflow:hidden;padding:17px;background:linear-gradient(135deg,#18294a,#355a8b);color:#fff}
+.payment-card-template::after{position:absolute;right:-42px;bottom:-80px;width:210px;height:210px;border:1px solid #ffffff24;border-radius:50%;content:"";box-shadow:0 0 0 20px #ffffff0b,0 0 0 42px #ffffff08;pointer-events:none}
+.payment-card-credit{background:linear-gradient(135deg,#35244f,#8058a5)}
+.payment-card-debit{background:linear-gradient(135deg,#164a49,#2f8d7a)}
+.payment-card-prepaid{background:linear-gradient(135deg,#674522,#be7b3b)}
+.payment-card-forex{background:linear-gradient(135deg,#26394c,#527d91)}
+.payment-card-top{display:flex;align-items:center;gap:10px;color:#ffffffdc}
+.payment-card-chip{width:25px;height:19px;border:1px solid #ffffffa8;border-radius:5px;background:linear-gradient(135deg,#ffffff65,#ffffff17)}
+.payment-card-kind{margin-left:auto;padding:5px 8px;border:1px solid #ffffff45;border-radius:20px;font-size:8px;text-transform:uppercase;letter-spacing:.7px}
+.payment-card-template h3{position:relative;z-index:1}
+.payment-card-number{display:flex;gap:5px;align-items:center;min-height:19px;font-family:ui-monospace,SFMono-Regular,Consolas,monospace;font-size:12px;letter-spacing:1.2px}
+.payment-card-number b{font-size:12px}
+.payment-card-meta{position:relative;z-index:1;display:grid;grid-template-columns:1.1fr 1fr 1fr;gap:9px}
+.payment-card-meta>span{display:grid;gap:4px;min-width:0}
+.payment-card-meta small{color:#ffffffa8;font-size:7px;letter-spacing:.65px}
+.payment-card-meta b{overflow:hidden;font-size:9px;text-overflow:ellipsis;white-space:nowrap}
+.payment-card-account{position:relative;z-index:1;color:#ffffffbd;font-size:8px}
+.payment-card-reveal{position:relative;z-index:1;display:flex;align-items:center;gap:5px;justify-self:start;padding:5px 0;border:0;background:transparent;color:#fff;font-size:9px;text-decoration:underline;text-underline-offset:3px}
 .priority-select{min-width:88px;padding:6px 7px;border-color:var(--line);font-size:9px;font-weight:650;text-transform:capitalize}
 .priority-select.priority-high{color:var(--priority-high)}
 .priority-select.priority-medium{color:var(--priority-medium)}
@@ -443,6 +480,11 @@ svg{flex-shrink:0}
 .modalhead h2{margin:5px 0 0;font-size:17px;letter-spacing:-.3px}
 .modal form{display:grid;gap:15px}
 .record-form-hint{margin:0;color:var(--muted);font-size:10px;line-height:1.5}
+.transaction-funding{display:grid;gap:12px;padding:13px;border:1px solid var(--line);border-radius:10px;background:color-mix(in srgb,var(--bg) 45%,transparent)}
+.transaction-funding-heading{display:grid;gap:4px}
+.transaction-funding-heading b{color:var(--text);font-size:11px}
+.transaction-funding-heading small,.transaction-funding-total span{color:var(--muted);font-size:9px;line-height:1.5}
+.transaction-funding-total{display:flex;flex-wrap:wrap;justify-content:space-between;gap:4px;margin:0;color:var(--text);font-size:10px;font-weight:650}
 .advanced-fields{border:1px solid var(--line);border-radius:9px;padding:0 11px;background:color-mix(in srgb,var(--bg) 45%,transparent)}
 .advanced-fields summary{display:flex;align-items:center;justify-content:space-between;gap:10px;min-height:40px;color:var(--text);font-size:10px;font-weight:650;cursor:pointer;list-style:none}
 .advanced-fields summary::-webkit-details-marker{display:none}

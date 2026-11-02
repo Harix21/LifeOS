@@ -11,6 +11,7 @@ const links = [
   { key: "savings_contributions", label: "Contributions" },
   { key: "loans", label: "Borrowed & lent" },
   { key: "financial_accounts", label: "Accounts" },
+  { key: "payment_cards", label: "Payment cards" },
   { key: "recurring_transactions", label: "Recurring" },
 ];
 

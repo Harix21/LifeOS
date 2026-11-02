@@ -1,7 +1,8 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import {
-  Activity, Bell, BookOpen, BriefcaseBusiness, CalendarDays, Droplets,
+  Activity, Bell, BookOpen, BriefcaseBusiness, CalendarDays, CreditCard, Droplets,
+  Eye, EyeOff, Fingerprint,
   Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Dumbbell, Download, Flame, LayoutDashboard,
   Heart, Leaf, LogOut, Menu, Moon, Plus, Search, Settings, Sun, Target, Trash2, UserRound, Wallet, X,
   Zap,
@@ -31,6 +32,7 @@ type Field = {
   label: string;
   type?: FieldKind;
   required?: boolean;
+  sensitive?: boolean;
   options?: string[];
   relationTable?: string;
   relationLabel?: string;
@@ -171,7 +173,7 @@ const resources: Resource[] = [
   ] },
   { key: "transactions", label: "Transactions", table: "transactions", display: "title", fields: [
     { name: "title", label: "Description", required: true }, { name: "type", label: "Type", type: "select", options: ["income", "expense"], required: true },
-    { name: "amount", label: "Amount", type: "number", required: true, min: 0 }, { name: "transaction_date", label: "Date", type: "date", required: true },
+    { name: "amount", label: "Amount", type: "number", required: true, min: 0.01 }, { name: "transaction_date", label: "Date", type: "date", required: true },
     { name: "account_id", label: "Account", type: "relation", relationTable: "financial_accounts", relationLabel: "name" },
     { name: "category_id", label: "Category", type: "relation", relationTable: "transaction_categories", relationLabel: "name" },
     { name: "notes", label: "Notes", type: "textarea" },
@@ -213,12 +215,28 @@ const resources: Resource[] = [
     { name: "type", label: "Type", required: true }, { name: "scheduled_for", label: "Scheduled for", type: "datetime-local" },
     { name: "read_at", label: "Read at", type: "datetime-local" },
   ] },
+  { key: "personal_documents", label: "Personal documents", table: "personal_documents", display: "document_name", fields: [
+    { name: "document_name", label: "Document name", required: true },
+    { name: "document_type", label: "Document type", type: "select", options: ["aadhaar", "pan", "passport", "driving_license", "voter_id", "other"], required: true },
+    { name: "holder_name", label: "Name on document" }, { name: "document_number", label: "Document number", sensitive: true },
+    { name: "issuing_authority", label: "Issuing authority" }, { name: "issue_date", label: "Issue date", type: "date" },
+    { name: "expiry_date", label: "Expiry date", type: "date" }, { name: "notes", label: "Notes", type: "textarea" },
+  ] },
+  { key: "payment_cards", label: "Payment cards", table: "payment_cards", display: "card_name", fields: [
+    { name: "card_name", label: "Card name", required: true },
+    { name: "card_type", label: "Card type", type: "select", options: ["debit", "credit", "prepaid", "forex", "other"], required: true },
+    { name: "issuer", label: "Bank / issuer" }, { name: "network", label: "Network" },
+    { name: "last_four", label: "Last four digits only", sensitive: true },
+    { name: "expiry_date", label: "Expiry date", type: "date" },
+    { name: "account_id", label: "Linked account", type: "relation", relationTable: "financial_accounts", relationLabel: "name" },
+    { name: "notes", label: "Notes", type: "textarea" },
+  ] },
 ];
 
 const groups = [
-  { title: "Personal", icon: UserRound, dashboardKey: "personal_dashboard", items: ["tasks", "goals", "habits", "habit_completions", "mood_entries", "notifications"] },
+  { title: "Personal", icon: UserRound, dashboardKey: "personal_dashboard", items: ["tasks", "goals", "habits", "habit_completions", "mood_entries", "personal_documents", "notifications"] },
   { title: "Fitness", icon: Dumbbell, dashboardKey: "fitness_dashboard", items: ["fitness_profiles", "weight_entries", "workout_sessions", "workout_session_exercises", "workout_routines", "workout_routine_exercises", "exercises", "nutrition_entries", "water_entries"] },
-  { title: "Finance", icon: Wallet, dashboardKey: "finance_dashboard", items: ["financial_accounts", "transactions", "transaction_categories", "budgets", "savings_goals", "savings_contributions", "loans", "recurring_transactions"] },
+  { title: "Finance", icon: Wallet, dashboardKey: "finance_dashboard", items: ["financial_accounts", "payment_cards", "transactions", "transaction_categories", "budgets", "savings_goals", "savings_contributions", "loans", "recurring_transactions"] },
   { title: "Projects", icon: BriefcaseBusiness, dashboardKey: "project_dashboard", items: ["projects", "project_milestones", "skills", "job_applications", "time_entries"] },
 ];
 
@@ -339,6 +357,10 @@ const displayValue = (value: unknown) => {
   if (value === null || value === undefined || value === "") return "—";
   if (typeof value === "boolean") return value ? "Yes" : "No";
   return String(value);
+};
+const maskedValue = (value: unknown) => {
+  const text = String(value ?? "");
+  return text ? text.length <= 4 ? "•".repeat(text.length) : `•••• ${text.slice(-4)}` : "—";
 };
 function expandCalendarEvents(events: Row[], start: Date, end: Date) {
   const occurrences: Row[] = [];
@@ -1580,7 +1602,8 @@ function Reports({ userId, currencyCode }: { userId: string; currencyCode: strin
   for (const transaction of tx.data ?? []) {
     if (!transaction.account_id || String(transaction.transaction_date) > end) continue;
     const month = String(transaction.transaction_date).slice(0, 7);
-    monthlySavings.set(month, (monthlySavings.get(month) ?? 0) + (transaction.type === "income" ? Number(transaction.amount) : -Number(transaction.amount)));
+    const accountAmount = Number(transaction.account_paid_amount ?? transaction.amount);
+    monthlySavings.set(month, (monthlySavings.get(month) ?? 0) + (transaction.type === "income" ? accountAmount : -accountAmount));
   }
   let runningBalance = (accounts.data ?? []).reduce((sum, account) => sum + (account.type === "credit" ? -1 : 1) * Number(account.opening_balance ?? 0), 0);
   const netWorth = (accounts.data ?? []).length ? [...monthlySavings].sort(([a], [b]) => a.localeCompare(b)).flatMap(([month, net]) => {
@@ -1953,6 +1976,7 @@ function HabitInsights({ habits, completions, loading, online, busy, onToggleChe
 function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAddConsumed }: RecordsPageProps & { resource: Resource }) {
   const rows = useRows(resource.table, userId);
   const habitCompletions = useRows("habit_completions", userId, resource.key === "habits");
+  const linkedAccounts = useRows("financial_accounts", userId, resource.key === "payment_cards");
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
@@ -1977,27 +2001,19 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       const payload = cleanFormValues(values, resource.fields);
       if (resource.key === "tasks" && payload.status === "done") payload.completed_at = editing?.completed_at ?? new Date().toISOString();
       else if (resource.key === "tasks" && payload.status && payload.status !== "done") payload.completed_at = null;
-      const borrowedFrom = String(values.borrowed_from ?? "").trim();
-      const rawBorrowedAmount = values.borrowed_amount;
-      const hasBorrowingDetails = Boolean(borrowedFrom)
-        || (typeof rawBorrowedAmount === "number" && Number.isFinite(rawBorrowedAmount));
-      if (resource.key === "transactions" && !editing && payload.type === "expense" && hasBorrowingDetails) {
-        const borrowedAmount = Number(rawBorrowedAmount);
-        if (!borrowedFrom || !Number.isFinite(borrowedAmount) || borrowedAmount <= 0) {
-          throw new Error("Enter both the person you borrowed from and the borrowed amount.");
-        }
-        if (borrowedAmount > Number(payload.amount)) {
-          throw new Error("The borrowed amount cannot exceed the expense total.");
-        }
-        const { error } = await supabase.rpc("create_expense_with_borrowing", {
+      if (resource.key === "transactions" && !editing && payload.type === "expense") {
+        const accountAmount = Number(values.account_paid_amount ?? 0);
+        const borrowedAmount = Number(values.borrowed_amount ?? 0);
+        const { error } = await supabase.rpc("create_expense_with_funding_split", {
           p_user_id: userId,
           p_title: String(payload.title),
           p_amount: Number(payload.amount),
           p_transaction_date: String(payload.transaction_date),
-          p_account_id: payload.account_id ?? null,
+          p_account_id: accountAmount > 0 ? payload.account_id ?? null : null,
+          p_account_amount: accountAmount,
           p_category_id: payload.category_id ?? null,
           p_notes: payload.notes ?? null,
-          p_borrowed_from: borrowedFrom,
+          p_borrowed_from: String(values.borrowed_from ?? "").trim() || null,
           p_borrowed_amount: borrowedAmount,
         });
         if (error) throw error;
@@ -2113,7 +2129,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     {resource.key === "tasks" && <TaskInsights rows={rows.data ?? []} />}
     {resource.key === "habits" ? <>{habitCompletions.error && <ErrorState error={habitCompletions.error} onRetry={() => void habitCompletions.refetch()} />}<HabitInsights habits={rows.data ?? []} completions={habitCompletions.data ?? []} loading={habitCompletions.isLoading} online={online} busy={toggleHabitCheckin.isPending} onToggleCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })} /></>
       : resource.key === "nutrition_entries" ? <NutritionInsights rows={rows.data ?? []} />
-        : resource.key !== "tasks" && <RecordInsights resource={resource} rows={rows.data ?? []} />}
+        : resource.key !== "tasks" && !["personal_documents", "payment_cards"].includes(resource.key) && <RecordInsights resource={resource} rows={rows.data ?? []} />}
     {rows.isLoading ? <LoadingState /> : <section className="panel records-panel">
       <div className="records-toolbar"><div><h2>Your {resource.label.toLowerCase()}</h2><p>{filtered.length} record{filtered.length === 1 ? "" : "s"} · {rows.data?.length ?? 0} total · private to your account</p></div>
         <div className="inline-actions">{resource.key === "notifications" && <button className="secondary" disabled={!online || markingAll || !rows.data?.some((row) => !row.read_at)} onClick={() => void markAsRead()}>Mark all read</button>}
@@ -2125,7 +2141,8 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           {resource.key === "tasks" && <label className="filter-input task-filter"><span className="sr-only">Filter by category</span><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}><option value="all">All categories</option>{Object.keys(areaStyles).map((areaName) => <option key={areaName} value={areaName}>{areaName}</option>)}</select></label>}
           <label className="filter-input"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${resource.label.toLowerCase()}`} /></label></div></div>
       {!filtered.length ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored in your Supabase account."} action={!rows.data?.length && <button className="text-button" disabled={!online} onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
-        : <div className="record-list">{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row} online={online}
+        : <div className={`record-list ${["personal_documents", "payment_cards"].includes(resource.key) ? "identity-record-list" : ""}`}>{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row} online={online}
+          linkedAccountName={(linkedAccounts.data ?? []).find((account) => account.id === row.account_id)?.name as string | undefined}
           checkins={habitCompletions.data ?? []} checkinBusy={toggleHabitCheckin.isPending}
           onToggleHabitCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })}
           onFieldChange={(field, value) => updateInlineField.mutate({ row, field, value })}
@@ -2216,31 +2233,52 @@ function HabitRecordCalendar({ habit, checkins, online, busy, onToggle }: {
   </div>;
 }
 
-function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMarkRead, onPriorityChange, onFieldChange, checkins = [], checkinBusy = false, onToggleHabitCheckin }: {
+function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMarkRead, onPriorityChange, onFieldChange, checkins = [], checkinBusy = false, onToggleHabitCheckin, linkedAccountName }: {
   resource: Resource; row: Row; online: boolean; onEdit: () => void; onDelete: () => void; onCheckIn?: () => void;
   onMarkRead?: () => void; onPriorityChange?: (priority: string) => void;
   onFieldChange: (field: Field, value: unknown) => void; checkins?: Row[]; checkinBusy?: boolean;
   onToggleHabitCheckin?: (habitId: string, date: string, checked: boolean) => void;
+  linkedAccountName?: string;
 }) {
   const [expanded, setExpanded] = useState(false);
+  const [revealed, setRevealed] = useState(false);
   const detailFields = resource.fields.filter((field) => ![resource.display, "icon", "color", "priority", "area"].includes(field.name) && row[field.name] !== null && row[field.name] !== undefined && row[field.name] !== "");
   const inlineFields = resource.fields.filter((field) => ["select", "number", "checkbox"].includes(field.type ?? "") && field.name !== "priority");
   const checkedToday = resource.key === "habits" && checkins.some((item) => item.habit_id === row.id && item.completed_on === today());
   const HabitIcon = habitIcons[String(row.icon)] ?? Flame;
   const area = typeof row.area === "string" ? areaStyles[row.area] : undefined;
   const AreaIcon = area?.icon;
-  return <article className="record-card">
+  const isDocument = resource.key === "personal_documents";
+  const isPaymentCard = resource.key === "payment_cards";
+  return <article className={`record-card ${isDocument ? "identity-document-card" : isPaymentCard ? "payment-card-record" : ""}`}>
     {resource.key === "habits" ? <span className={`habit-icon habit-icon-large habit-color-${String(row.color ?? "violet")}`}><HabitIcon size={19} /></span>
       : resource.key === "tasks" ? <span className={`task-marker priority-${String(row.priority ?? "medium")}`} aria-hidden="true" /> : null}
-    <div className="record-info"><div className="record-heading"><h3>{displayValue(row[resource.display])}</h3>{row.status ? <span className="badge">{String(row.status).replaceAll("_", " ")}</span> : null}
+    <div className="record-info">{isDocument ? <div className="identity-document-template">
+      <div className="identity-template-top"><span className="identity-template-icon"><Fingerprint size={17} /></span><span className="identity-type-label">{String(row.document_type ?? "document").replaceAll("_", " ")}</span></div>
+      <div className="identity-document-title"><h3>{displayValue(row.document_name)}</h3><span>{String(row.issuing_authority ?? "Personal document")}</span></div>
+      <div className="identity-sensitive-line"><div><small>Document number</small><b>{revealed ? displayValue(row.document_number) : maskedValue(row.document_number)}</b></div>
+        <button className="text-button reveal-sensitive" type="button" aria-label={`${revealed ? "Mask" : "Reveal"} document number`} aria-pressed={revealed} onClick={() => setRevealed((value) => !value)}>{revealed ? <EyeOff size={14} /> : <Eye size={14} />}{revealed ? "Hide" : "Reveal"}</button></div>
+      <div className="identity-document-meta"><span><small>Name on document</small><b>{displayValue(row.holder_name)}</b></span>
+        <span><small>Expiry</small><b>{row.expiry_date ? configuredDate(String(row.expiry_date)) : "No expiry date"}</b></span></div>
+    </div> : isPaymentCard ? <div className={`payment-card-template payment-card-${String(row.card_type ?? "other")}`}>
+      <div className="payment-card-top"><span className="payment-card-chip" aria-hidden="true" /><CreditCard size={19} /><span className="payment-card-kind">{String(row.card_type ?? "card").replaceAll("_", " ")}</span></div>
+      <h3>{displayValue(row.card_name)}</h3>
+      <div className="payment-card-number"><span>{revealed ? "•••• •••• •••• " : "•••• •••• •••• ••••"}</span>{revealed && <b>{displayValue(row.last_four)}</b>}</div>
+      <div className="payment-card-meta"><span><small>ISSUER</small><b>{displayValue(row.issuer)}</b></span><span><small>NETWORK</small><b>{displayValue(row.network)}</b></span>
+        <span><small>EXPIRES</small><b>{row.expiry_date ? configuredDate(String(row.expiry_date)) : "—"}</b></span></div>
+      {linkedAccountName && <small className="payment-card-account">Linked to {linkedAccountName}</small>}
+      <button className="payment-card-reveal" type="button" aria-label={`${revealed ? "Mask" : "Reveal"} last four card digits`} aria-pressed={revealed} onClick={() => setRevealed((value) => !value)}>{revealed ? <EyeOff size={13} /> : <Eye size={13} />}{revealed ? "Hide details" : "Reveal last four"}</button>
+    </div> : <><div className="record-heading"><h3>{displayValue(row[resource.display])}</h3>{row.status ? <span className="badge">{String(row.status).replaceAll("_", " ")}</span> : null}
         {resource.key === "tasks" && typeof row.priority === "string" && <span className={`badge priority-badge priority-${row.priority}`}>{row.priority}</span>}
         {area && AreaIcon && <span className={`category-badge ${area.className}`}><AreaIcon size={12} />{String(row.area)}</span>}
       </div>
-      <div className="record-details">{(expanded ? detailFields : detailFields.slice(0, 4)).map((field) => <span key={field.name}><small>{field.label}</small>{displayValue(row[field.name])}</span>)}
+      <div className="record-details">{(expanded ? detailFields : detailFields.slice(0, 4)).map((field) => <span key={field.name}><small>{field.label}</small>{field.sensitive ? maskedValue(row[field.name]) : displayValue(row[field.name])}</span>)}
+        {resource.key === "transactions" && row.type === "expense" && row.account_paid_amount !== undefined && Number(row.account_paid_amount) > 0
+          && <span><small>Paid from account</small>{Number(row.account_paid_amount).toFixed(2)}</span>}
         <small className="record-created">{row.updated_at && row.updated_at !== row.created_at ? `Updated ${configuredDate(String(row.updated_at))}` : row.created_at ? `Added ${configuredDate(String(row.created_at))}` : ""}</small></div>
       {detailFields.length > 4 && <button className="text-button record-expand" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? "Show less" : `View all ${detailFields.length} details`}<ChevronDown className={expanded ? "record-expand-icon is-expanded" : "record-expand-icon"} size={13} /></button>}
       {inlineFields.length > 0 && <div className="record-inline-fields">{inlineFields.map((field) => <InlineRecordField key={field.name} field={field} value={row[field.name]} disabled={!online} onChange={(value) => onFieldChange(field, value)} />)}</div>}
-      {resource.key === "habits" && onToggleHabitCheckin && <HabitRecordCalendar habit={row} checkins={checkins} online={online} busy={checkinBusy} onToggle={onToggleHabitCheckin} />}
+      {resource.key === "habits" && onToggleHabitCheckin && <HabitRecordCalendar habit={row} checkins={checkins} online={online} busy={checkinBusy} onToggle={onToggleHabitCheckin} />}</>}
     </div><div className="record-actions">{onCheckIn && <button className={`secondary check-in ${checkedToday ? "checked-in" : ""}`} disabled={checkedToday || !online} onClick={onCheckIn}>{checkedToday ? "Done today" : "Check in"}</button>}
       {resource.key === "tasks" && onPriorityChange && <select className={`priority-select priority-${String(row.priority ?? "medium")}`} value={String(row.priority ?? "medium")} aria-label={`Set priority for ${String(row.title)}`} disabled={!online} onChange={(event) => onPriorityChange(event.target.value)}>{taskPriorities.map((priority) => <option key={priority} value={priority}>{priority[0].toUpperCase() + priority.slice(1)}</option>)}</select>}
       {onMarkRead && <button className="secondary check-in" disabled={!online} onClick={onMarkRead}>Mark read</button>}
@@ -2250,14 +2288,24 @@ function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMark
 }
 
 function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void }) {
-  const defaults = useMemo(() => Object.fromEntries(resource.fields.map((field) => [field.name, defaultValue(field, initial?.[field.name])])), [initial, resource]);
-  const { register, handleSubmit, reset, setError, watch, formState: { errors } } = useForm<Record<string, unknown>>({ defaultValues: defaults });
+  const defaults = useMemo<Record<string, unknown>>(() => ({
+    ...Object.fromEntries(resource.fields.map((field) => [field.name, defaultValue(field, initial?.[field.name])])),
+    funding_source: "account",
+    account_paid_amount: "",
+    borrowed_amount: "",
+  }), [initial, resource]);
+  const { register, handleSubmit, reset, setError, watch, formState: { errors } } = useForm<Record<string, unknown>>({
+    defaultValues: defaults,
+  });
   useEffect(() => reset(defaults), [defaults, reset]);
   const schema = useMemo(() => validateSchema(resource.fields), [resource.fields]);
   const requiredFields = resource.fields.filter((field) => field.required);
-  const optionalFields = resource.fields.filter((field) => !field.required);
   const transactionType = watch("type");
-  const showBorrowingFields = resource.key === "transactions" && !initial && transactionType === "expense";
+  const showFundingFields = resource.key === "transactions" && !initial && transactionType === "expense";
+  const optionalFields = resource.fields.filter((field) => !field.required && !(showFundingFields && field.name === "account_id"));
+  const accountOptions = useRows("financial_accounts", userId, showFundingFields);
+  const fundingSource = watch("funding_source");
+  const transactionAmount = watch("amount");
   const renderField = (field: Field) => <label key={field.name} className={`form-field ${field.type === "textarea" ? "field-wide" : ""}`}>
     <span>{field.label}{field.required && <i> *</i>}</span>
     {field.type === "relation" ? <RelationInput field={field} userId={userId} register={register(field.name, { required: field.required })} />
@@ -2268,6 +2316,39 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
     {errors[field.name]?.message && <small className="field-error">{String(errors[field.name]?.message)}</small>}
   </label>;
   function submit(values: Record<string, unknown>) {
+    if (resource.key === "payment_cards" && values.last_four && !/^\d{4}$/.test(String(values.last_four))) {
+      setError("last_four", { message: "Enter exactly the last four digits." });
+      return;
+    }
+    if (showFundingFields) {
+      if (fundingSource === "account") {
+        values.account_paid_amount = Number(values.amount);
+        values.borrowed_amount = 0;
+        values.borrowed_from = "";
+      } else if (fundingSource === "borrowed") {
+        values.account_paid_amount = 0;
+        values.borrowed_amount = Number(values.amount);
+        values.account_id = "";
+      }
+      const totalCents = Math.round(Number(values.amount) * 100);
+      const accountCents = Math.round(Number(values.account_paid_amount || 0) * 100);
+      const borrowedCents = Math.round(Number(values.borrowed_amount || 0) * 100);
+      if (accountCents + borrowedCents !== totalCents) {
+        setError("account_paid_amount", { message: "Account and borrowed amounts must add up to the expense total." });
+        setError("borrowed_amount", { message: "Account and borrowed amounts must add up to the expense total." });
+        return;
+      }
+      if (accountCents > 0 && !values.account_id) {
+        setError("account_id", { message: "Choose the account used for this payment." });
+        return;
+      }
+      if (borrowedCents > 0 && !String(values.borrowed_from ?? "").trim()) {
+        setError("borrowed_from", { message: "Enter the person you borrowed from." });
+        return;
+      }
+      if (borrowedCents === 0) values.borrowed_from = "";
+      if (accountCents === 0) values.account_id = "";
+    }
     const result = schema.safeParse(values);
     if (!result.success) {
       for (const issue of result.error.issues) {
@@ -2283,15 +2364,36 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
       <div className="modalhead"><div><p className="eyebrow">{initial ? "EDIT RECORD" : "NEW RECORD"}</p><h2 id="dialog-title">{initial ? "Update" : "Add"} {resource.label.replace(/s$/, "").toLowerCase()}</h2></div>
         <button className="icon" aria-label="Close dialog" disabled={saving} onClick={onClose}><X size={17} /></button></div>
       <form onSubmit={(event) => void handleSubmit(submit)(event)} noValidate>
-        <p className="record-form-hint">{initial ? "Update the fields you need. Optional details are grouped below." : "Start with the required details. You can add more information whenever you need."}</p>
+        <p className="record-form-hint">{resource.key === "personal_documents"
+          ? "ID numbers are masked in the record list. Add only details you need to keep here."
+          : resource.key === "payment_cards"
+            ? "Only the last four digits are stored. Never enter your full card number, PIN, or CVV."
+            : initial ? "Update the fields you need. Optional details are grouped below." : "Start with the required details. You can add more information whenever you need."}</p>
         <div className="form-grid">{requiredFields.map(renderField)}</div>
-        {(optionalFields.length > 0 || showBorrowingFields) && <details className="advanced-fields" open={Boolean(initial) || showBorrowingFields}>
-          <summary>Additional details <span>{optionalFields.length + (showBorrowingFields ? 2 : 0)} optional</span></summary>
+        {showFundingFields && <section className="transaction-funding">
+          <div className="transaction-funding-heading"><b>How was this expense paid?</b><small>Choose an account, a person you borrowed from, or split the amount.</small></div>
+          <label className="form-field"><span>Payment source</span><select {...register("funding_source")} aria-label="Payment source">
+            <option value="account">From an account</option><option value="borrowed">Borrowed from someone</option><option value="split">Split between account and borrowing</option>
+          </select></label>
+          {(fundingSource === "account" || fundingSource === "split") && <>
+            <label className="form-field"><span>Account *</span><select {...register("account_id")} required aria-label="Account used for expense">
+              <option value="">Select account…</option>{(accountOptions.data ?? []).map((account) => <option key={account.id} value={account.id}>{String(account.name)}</option>)}
+            </select>{errors.account_id?.message && <small className="field-error">{String(errors.account_id.message)}</small>}</label>
+            {fundingSource === "split" && <label className="form-field"><span>Paid from account *</span><input type="number" min="0.01" max={Number(transactionAmount) || undefined} step="0.01" required {...register("account_paid_amount", { valueAsNumber: true })} placeholder="0.00" />
+              {errors.account_paid_amount?.message && <small className="field-error">{String(errors.account_paid_amount.message)}</small>}</label>}
+          </>}
+          {(fundingSource === "borrowed" || fundingSource === "split") && <>
+            <label className="form-field"><span>Borrowed from *</span><input type="text" placeholder="Person’s name" {...register("borrowed_from")} />
+              {errors.borrowed_from?.message && <small className="field-error">{String(errors.borrowed_from.message)}</small>}</label>
+            {fundingSource === "split" && <label className="form-field"><span>Borrowed amount *</span><input type="number" min="0.01" max={Number(transactionAmount) || undefined} step="0.01" {...register("borrowed_amount", { valueAsNumber: true })} placeholder="0.00" />
+              {errors.borrowed_amount?.message && <small className="field-error">{String(errors.borrowed_amount.message)}</small>}</label>
+            }
+          </>}
+          <p className="transaction-funding-total">Expense total: {Number(transactionAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{fundingSource === "split" && <span>Paid from account and borrowed amounts must total this value.</span>}</p>
+        </section>}
+        {optionalFields.length > 0 && <details className="advanced-fields" open={Boolean(initial)}>
+          <summary>Additional details <span>{optionalFields.length} optional</span></summary>
           <div className="form-grid">{optionalFields.map(renderField)}
-            {showBorrowingFields && <>
-              <label className="form-field"><span>Borrowed from</span><input type="text" placeholder="Person’s name" {...register("borrowed_from")} /></label>
-              <label className="form-field"><span>Borrowed amount</span><input type="number" min="0.01" step="any" placeholder="Amount of this expense borrowed" {...register("borrowed_amount", { valueAsNumber: true })} /></label>
-            </>}
           </div>
         </details>}
         <div className="modal-actions"><button type="button" className="secondary" onClick={onClose} disabled={saving}>Cancel</button><button className="primary" type="submit" disabled={saving}>{saving ? "Saving…" : initial ? "Save changes" : `Save ${resource.label.replace(/s$/, "").toLowerCase()}`}</button></div>

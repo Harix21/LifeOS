@@ -9,6 +9,7 @@ const links = [
   { key: "habits", label: "Habits" },
   { key: "habit_completions", label: "Check-ins" },
   { key: "mood_entries", label: "Mood" },
+  { key: "personal_documents", label: "Documents & IDs" },
   { key: "notifications", label: "Notifications" },
 ];
 
