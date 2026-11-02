@@ -46,6 +46,13 @@ type Resource = {
   fields: Field[];
 };
 type Row = { id: string; user_id: string; created_at?: string; updated_at?: string; [key: string]: unknown };
+type LoanGroup = {
+  key: string;
+  personName: string;
+  direction: "borrowed" | "lent";
+  entries: Row[];
+  outstandingAmount: number;
+};
 type Theme = "light" | "dark" | "system";
 type Toast = { id: number; text: string; error?: boolean };
 type DemoSession = { demo: true; user: { id: string; email: string; user_metadata: { display_name: string } } };
@@ -392,6 +399,7 @@ const currency = (amount: number, code = "INR") => {
   try { return new Intl.NumberFormat(undefined, { style: "currency", currency: code, maximumFractionDigits: 0 }).format(amount); }
   catch { return `${code} ${amount.toLocaleString()}`; }
 };
+const loanCurrency = (amount: number) => new Intl.NumberFormat(undefined, { style: "currency", currency: "INR", maximumFractionDigits: 2 }).format(amount);
 
 async function loadRows(table: string, userId: string): Promise<Row[]> {
   if (userId === DEMO_USER_ID) return getDemoRows(table, userId) as Row[];
@@ -414,6 +422,20 @@ function useRows(table: string, userId: string, enabled = true) {
     queryFn: () => loadRows(table, userId),
     enabled: Boolean((supabase || userId === DEMO_USER_ID) && enabled),
   });
+}
+
+function groupLoans(rows: Row[]): LoanGroup[] {
+  const groups = new Map<string, LoanGroup>();
+  for (const row of rows) {
+    const personName = String(row.person_name ?? "").trim();
+    const direction = row.direction === "lent" ? "lent" : "borrowed";
+    const key = `${direction}:${personName.toLocaleLowerCase()}`;
+    const group = groups.get(key) ?? { key, personName, direction, entries: [], outstandingAmount: 0 };
+    group.entries.push(row);
+    if (!row.is_settled) group.outstandingAmount += Number(row.amount ?? 0);
+    groups.set(key, group);
+  }
+  return [...groups.values()];
 }
 
 function validateSchema(fields: Field[]) {
@@ -1981,6 +2003,8 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
   const [deleting, setDeleting] = useState<Row | null>(null);
+  const [viewingLoanGroup, setViewingLoanGroup] = useState<LoanGroup | null>(null);
+  const linkedTransactions = useRows("transactions", userId, resource.key === "loans" && Boolean(viewingLoanGroup));
   const [filter, setFilter] = useState("");
   const [priorityFilter, setPriorityFilter] = useState("all");
   const [statusFilter, setStatusFilter] = useState("all");
@@ -2004,6 +2028,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       if (resource.key === "transactions" && !editing && payload.type === "expense") {
         const accountAmount = Number(values.account_paid_amount ?? 0);
         const borrowedAmount = Number(values.borrowed_amount ?? 0);
+        const loanDirection = String(values.funding_source ?? "") === "lent" ? "lent" : "borrowed";
         const { error } = await supabase.rpc("create_expense_with_funding_split", {
           p_user_id: userId,
           p_title: String(payload.title),
@@ -2015,6 +2040,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           p_notes: payload.notes ?? null,
           p_borrowed_from: String(values.borrowed_from ?? "").trim() || null,
           p_borrowed_amount: borrowedAmount,
+          p_loan_direction: loanDirection,
         });
         if (error) throw error;
         return null;
@@ -2029,7 +2055,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
-      if (resource.key === "transactions") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "loans"] });
+      if (resource.key === "transactions" || resource.key === "nutrition_entries") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "loans"] });
       setDialog(false); setEditing(null); onToast(`${resource.label} saved.`);
     },
     onError: (error) => onToast(`Could not save ${resource.label.toLowerCase()}: ${error.message}`, true),
@@ -2111,6 +2137,20 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       const bActivity = new Date(String(b.updated_at ?? b.created_at ?? 0)).getTime();
       return sortMode === "oldest" ? aActivity - bActivity : bActivity - aActivity;
     });
+  const loanGroups = resource.key === "loans" ? groupLoans(rows.data ?? []) : [];
+  const filteredLoanGroups = loanGroups
+    .filter((group) => group.entries.some((row) => Object.values(row).some((value) => String(value ?? "").toLowerCase().includes(filter.toLowerCase()))))
+    .sort((a, b) => {
+      const aActivity = new Date(String(a.entries[0]?.updated_at ?? a.entries[0]?.created_at ?? 0)).getTime();
+      const bActivity = new Date(String(b.entries[0]?.updated_at ?? b.entries[0]?.created_at ?? 0)).getTime();
+      return sortMode === "oldest" ? aActivity - bActivity : bActivity - aActivity;
+    });
+  const linkedTransactionIds = new Set((viewingLoanGroup?.entries ?? [])
+    .map((row) => String(row.transaction_id ?? "")).filter(Boolean));
+  const transactionsForLoanGroup = (linkedTransactions.data ?? [])
+    .filter((transaction) => linkedTransactionIds.has(transaction.id))
+    .sort((a, b) => String(b.transaction_date ?? "").localeCompare(String(a.transaction_date ?? "")));
+  const visibleRecordCount = resource.key === "loans" ? filteredLoanGroups.length : filtered.length;
   async function markAsRead(row?: Row) {
     if (!supabase || !online) return;
     setMarkingAll(true);
@@ -2131,7 +2171,9 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       : resource.key === "nutrition_entries" ? <NutritionInsights rows={rows.data ?? []} />
         : resource.key !== "tasks" && !["personal_documents", "payment_cards"].includes(resource.key) && <RecordInsights resource={resource} rows={rows.data ?? []} />}
     {rows.isLoading ? <LoadingState /> : <section className="panel records-panel">
-      <div className="records-toolbar"><div><h2>Your {resource.label.toLowerCase()}</h2><p>{filtered.length} record{filtered.length === 1 ? "" : "s"} · {rows.data?.length ?? 0} total · private to your account</p></div>
+      <div className="records-toolbar"><div><h2>Your {resource.label.toLowerCase()}</h2><p>{resource.key === "loans"
+        ? `${filteredLoanGroups.length} people · ${rows.data?.length ?? 0} entries · private to your account`
+        : `${filtered.length} record${filtered.length === 1 ? "" : "s"} · ${rows.data?.length ?? 0} total · private to your account`}</p></div>
         <div className="inline-actions">{resource.key === "notifications" && <button className="secondary" disabled={!online || markingAll || !rows.data?.some((row) => !row.read_at)} onClick={() => void markAsRead()}>Mark all read</button>}
           <label className="filter-input task-filter"><span className="sr-only">Sort records</span><select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort records">
             {resource.key === "tasks" && <option value="priority">Priority & due date</option>}<option value="recent">Recently updated</option><option value="oldest">Oldest updated</option>
@@ -2140,7 +2182,11 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           {resource.key === "tasks" && <label className="filter-input task-filter"><span className="sr-only">Filter by status</span><select value={statusFilter} onChange={(event) => setStatusFilter(event.target.value)}><option value="all">All statuses</option>{["todo", "in_progress", "done", "cancelled"].map((status) => <option key={status} value={status}>{status.replaceAll("_", " ")}</option>)}</select></label>}
           {resource.key === "tasks" && <label className="filter-input task-filter"><span className="sr-only">Filter by category</span><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}><option value="all">All categories</option>{Object.keys(areaStyles).map((areaName) => <option key={areaName} value={areaName}>{areaName}</option>)}</select></label>}
           <label className="filter-input"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${resource.label.toLowerCase()}`} /></label></div></div>
-      {!filtered.length ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored in your Supabase account."} action={!rows.data?.length && <button className="text-button" disabled={!online} onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
+      {!visibleRecordCount ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored in your Supabase account."} action={!rows.data?.length && <button className="text-button" disabled={!online} onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
+        : resource.key === "loans" ? <div className="record-list loan-person-list">{filteredLoanGroups.map((group) => <LoanGroupCard key={group.key} group={group} online={online}
+          onViewTransactions={() => setViewingLoanGroup(group)}
+          onEdit={(row) => { setEditing(row); setDialog(true); }}
+          onDelete={(row) => setDeleting(row)} />)}</div>
         : <div className={`record-list ${["personal_documents", "payment_cards"].includes(resource.key) ? "identity-record-list" : ""}`}>{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row} online={online}
           linkedAccountName={(linkedAccounts.data ?? []).find((account) => account.id === row.account_id)?.name as string | undefined}
           checkins={habitCompletions.data ?? []} checkinBusy={toggleHabitCheckin.isPending}
@@ -2155,6 +2201,20 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     </section>}
     {dialog && <RecordDialog resource={resource} userId={userId} initial={editing} saving={save.isPending} onClose={() => { if (!save.isPending) { setDialog(false); setEditing(null); } }} onSave={(values) => save.mutate(values)} />}
     {deleting && <ConfirmDialog title={`Delete ${String(deleting[resource.display] ?? "record")}?`} detail="This cannot be undone. Related records may also be removed according to the database relationship." busy={remove.isPending} onCancel={() => setDeleting(null)} onConfirm={() => remove.mutate(deleting)} />}
+    {viewingLoanGroup && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setViewingLoanGroup(null); }}>
+      <section className="modal loan-transactions-modal" role="dialog" aria-modal="true" aria-labelledby="loan-transactions-title">
+        <div className="modalhead"><div><p className="eyebrow">{viewingLoanGroup.direction.toUpperCase()} · LINKED TRANSACTIONS</p><h2 id="loan-transactions-title">{viewingLoanGroup.personName}</h2></div>
+          <button className="icon" aria-label="Close linked transactions" onClick={() => setViewingLoanGroup(null)}><X size={17} /></button></div>
+        {linkedTransactions.error && <ErrorState error={linkedTransactions.error} onRetry={() => void linkedTransactions.refetch()} />}
+        {linkedTransactions.isLoading ? <LoadingState /> : linkedTransactions.error ? null : transactionsForLoanGroup.length
+          ? <div className="loan-transaction-list">{transactionsForLoanGroup.map((transaction) => <article className="loan-transaction" key={transaction.id}>
+            <div><b>{displayValue(transaction.title)}</b><small>{configuredDate(String(transaction.transaction_date ?? ""))} · {String(transaction.type ?? "transaction")}</small></div>
+            <strong>{loanCurrency(Number(transaction.amount ?? 0))}</strong>
+          </article>)}</div>
+          : <EmptyState title="No linked transactions" detail="These balances were added manually or have no transaction linked yet." />}
+        <div className="modal-actions"><button className="secondary" onClick={() => setViewingLoanGroup(null)}>Close</button></div>
+      </section>
+    </div>}
   </div>;
 }
 
@@ -2287,6 +2347,35 @@ function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMark
     </div></article>;
 }
 
+function LoanGroupCard({ group, online, onViewTransactions, onEdit, onDelete }: {
+  group: LoanGroup;
+  online: boolean;
+  onViewTransactions: () => void;
+  onEdit: (row: Row) => void;
+  onDelete: (row: Row) => void;
+}) {
+  const [expanded, setExpanded] = useState(false);
+  const amount = loanCurrency(group.outstandingAmount);
+  return <article className="record-card loan-person-card">
+    <div className="record-info">
+      <div className="record-heading"><h3>{group.personName}</h3><span className="badge">{group.direction}</span></div>
+      <div className="loan-person-balance"><small>Outstanding</small><strong>{amount}</strong><span>{group.entries.length} entr{group.entries.length === 1 ? "y" : "ies"}</span></div>
+      <div className="loan-person-actions">
+        <button className="secondary" onClick={onViewTransactions}>View transactions</button>
+        <button className="text-button" aria-expanded={expanded} onClick={() => setExpanded((value) => !value)}>
+          {expanded ? "Hide entries" : "Manage entries"}
+        </button>
+      </div>
+      {expanded && <div className="loan-person-entries">{group.entries.map((entry) => <div className="loan-entry" key={entry.id}>
+        <div><b>{loanCurrency(Number(entry.amount ?? 0))}</b><small>{configuredDate(String(entry.loan_date ?? ""))}{entry.is_settled ? " · Settled" : ""}</small>
+          {entry.notes !== null && entry.notes !== undefined && entry.notes !== "" && <small>{String(entry.notes)}</small>}</div>
+        <div className="inline-actions"><button className="secondary" disabled={!online} onClick={() => onEdit(entry)}>Edit</button>
+          <button className="secondary" disabled={!online} onClick={() => onDelete(entry)}>Delete</button></div>
+      </div>)}</div>}
+    </div>
+  </article>;
+}
+
 function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void }) {
   const defaults = useMemo<Record<string, unknown>>(() => ({
     ...Object.fromEntries(resource.fields.map((field) => [field.name, defaultValue(field, initial?.[field.name])])),
@@ -2329,11 +2418,17 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
         values.account_paid_amount = 0;
         values.borrowed_amount = Number(values.amount);
         values.account_id = "";
+      } else if (fundingSource === "lent") {
+        values.account_paid_amount = Number(values.amount);
+        values.borrowed_amount = Number(values.amount);
       }
       const totalCents = Math.round(Number(values.amount) * 100);
       const accountCents = Math.round(Number(values.account_paid_amount || 0) * 100);
       const borrowedCents = Math.round(Number(values.borrowed_amount || 0) * 100);
-      if (accountCents + borrowedCents !== totalCents) {
+      const amountsAreValid = fundingSource === "lent"
+        ? accountCents === totalCents && borrowedCents === totalCents
+        : accountCents + borrowedCents === totalCents;
+      if (!amountsAreValid) {
         setError("account_paid_amount", { message: "Account and borrowed amounts must add up to the expense total." });
         setError("borrowed_amount", { message: "Account and borrowed amounts must add up to the expense total." });
         return;
@@ -2371,9 +2466,9 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
             : initial ? "Update the fields you need. Optional details are grouped below." : "Start with the required details. You can add more information whenever you need."}</p>
         <div className="form-grid">{requiredFields.map(renderField)}</div>
         {showFundingFields && <section className="transaction-funding">
-          <div className="transaction-funding-heading"><b>How was this expense paid?</b><small>Choose an account, a person you borrowed from, or split the amount.</small></div>
+          <div className="transaction-funding-heading"><b>How was this expense paid?</b><small>Choose an account, record borrowing, or track money lent to someone.</small></div>
           <label className="form-field"><span>Payment source</span><select {...register("funding_source")} aria-label="Payment source">
-            <option value="account">From an account</option><option value="borrowed">Borrowed from someone</option><option value="split">Split between account and borrowing</option>
+            <option value="account">From an account</option><option value="borrowed">Borrowed from someone</option><option value="split">Split between account and borrowing</option><option value="lent">Lent to someone</option>
           </select></label>
           {(fundingSource === "account" || fundingSource === "split") && <>
             <label className="form-field"><span>Account *</span><select {...register("account_id")} required aria-label="Account used for expense">
@@ -2382,14 +2477,17 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
             {fundingSource === "split" && <label className="form-field"><span>Paid from account *</span><input type="number" min="0.01" max={Number(transactionAmount) || undefined} step="0.01" required {...register("account_paid_amount", { valueAsNumber: true })} placeholder="0.00" />
               {errors.account_paid_amount?.message && <small className="field-error">{String(errors.account_paid_amount.message)}</small>}</label>}
           </>}
-          {(fundingSource === "borrowed" || fundingSource === "split") && <>
-            <label className="form-field"><span>Borrowed from *</span><input type="text" placeholder="Person’s name" {...register("borrowed_from")} />
+          {fundingSource === "lent" && <label className="form-field"><span>Account *</span><select {...register("account_id")} required aria-label="Account used for lending">
+            <option value="">Select account…</option>{(accountOptions.data ?? []).map((account) => <option key={account.id} value={account.id}>{String(account.name)}</option>)}
+          </select>{errors.account_id?.message && <small className="field-error">{String(errors.account_id.message)}</small>}</label>}
+          {(fundingSource === "borrowed" || fundingSource === "split" || fundingSource === "lent") && <>
+            <label className="form-field"><span>{fundingSource === "lent" ? "Lent to *" : "Borrowed from *"}</span><input type="text" placeholder="Person’s name" {...register("borrowed_from")} />
               {errors.borrowed_from?.message && <small className="field-error">{String(errors.borrowed_from.message)}</small>}</label>
             {fundingSource === "split" && <label className="form-field"><span>Borrowed amount *</span><input type="number" min="0.01" max={Number(transactionAmount) || undefined} step="0.01" {...register("borrowed_amount", { valueAsNumber: true })} placeholder="0.00" />
               {errors.borrowed_amount?.message && <small className="field-error">{String(errors.borrowed_amount.message)}</small>}</label>
             }
           </>}
-          <p className="transaction-funding-total">Expense total: {Number(transactionAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{fundingSource === "split" && <span>Paid from account and borrowed amounts must total this value.</span>}</p>
+          <p className="transaction-funding-total">Expense total: {Number(transactionAmount || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}{fundingSource === "split" && <span>Paid from account and borrowed amounts must total this value.</span>}{fundingSource === "lent" && <span>The full expense is paid from the selected account and tracked as lent to this person.</span>}</p>
         </section>}
         {optionalFields.length > 0 && <details className="advanced-fields" open={Boolean(initial)}>
           <summary>Additional details <span>{optionalFields.length} optional</span></summary>

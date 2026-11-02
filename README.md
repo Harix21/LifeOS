@@ -35,7 +35,7 @@ LifeOS is a personal management workspace for tasks, goals, habits, journal entr
    supabase db push
    ```
 
-   `supabase db push` applies the migrations in order. `0002_lifeos_modules.sql` adds profiles and preferences, all management-module tables, RLS policies and indexes, profile onboarding, a private avatar bucket, and reminder support. `0003_habit_appearance.sql` adds each habit's saved icon and color. `0004_daily_journal_loans.sql` adds private borrowed/lent balances and the per-user journal theme and automatic-activity settings. `0005_journal_ebook.sql` stores per-user journal cover and profile-page customizations.
+   `supabase db push` applies the migrations in order. `0002_lifeos_modules.sql` adds profiles and preferences, all management-module tables, RLS policies and indexes, profile onboarding, a private avatar bucket, and reminder support. `0003_habit_appearance.sql` adds each habit's saved icon and color. `0004_daily_journal_loans.sql` adds private borrowed/lent balances and the per-user journal theme and automatic-activity settings. `0005_journal_ebook.sql` stores per-user journal cover and profile-page customizations. `0010_link_loans_to_transactions.sql` links loans to their originating transactions for person-level tracking.
 
    To validate migrations locally instead, start Docker Desktop's Linux engine and run:
 

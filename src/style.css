@@ -205,6 +205,24 @@ svg{flex-shrink:0}
 .record-expand-icon{transition:transform .16s ease}
 .record-expand-icon.is-expanded{transform:rotate(180deg)}
 .record-details>span{animation:record-enter .18s ease both}
+.loan-person-card{align-items:flex-start}
+.loan-person-balance{display:flex;align-items:baseline;gap:8px;margin-top:8px}
+.loan-person-balance small,.loan-person-balance>span{color:var(--muted);font-size:9px}
+.loan-person-balance strong{font-size:16px}
+.loan-person-actions{display:flex;align-items:center;gap:12px;margin-top:9px}
+.loan-person-actions .secondary{min-height:29px;padding:5px 9px;font-size:9px}
+.loan-person-entries{display:grid;gap:8px;margin-top:12px}
+.loan-entry{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:10px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.loan-entry>div:first-child{display:grid;gap:4px;min-width:0}
+.loan-entry b{font-size:11px}
+.loan-entry small{color:var(--muted);font-size:9px;overflow-wrap:anywhere}
+.loan-transactions-modal{width:min(560px,100%)}
+.loan-transaction-list{display:grid;gap:8px;max-height:min(55vh,460px);overflow:auto}
+.loan-transaction{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:11px;border:1px solid var(--line);border-radius:8px;background:var(--bg)}
+.loan-transaction>div{display:grid;gap:4px;min-width:0}
+.loan-transaction b{font-size:11px;overflow-wrap:anywhere}
+.loan-transaction small{color:var(--muted);font-size:9px}
+.loan-transaction strong{font-size:11px;white-space:nowrap}
 .identity-record-list{display:grid;grid-template-columns:repeat(auto-fill,minmax(min(100%,290px),1fr));gap:14px;padding:16px}
 .identity-record-list .record-card{display:flex;flex-direction:column;align-items:stretch;gap:0;overflow:hidden;padding:0;border:1px solid var(--line);border-radius:13px;background:var(--panel);transform:none}
 .identity-record-list .record-card:hover{transform:translateY(-2px);box-shadow:0 8px 24px #101c3212}
