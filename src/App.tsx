@@ -78,6 +78,7 @@ const resources: Resource[] = [
     { name: "title", label: "Title", required: true }, { name: "description", label: "Description", type: "textarea" },
     { name: "area", label: "Area", type: "select", options: ["Personal", "Professional", "Fitness", "Finance"], required: true },
     { name: "status", label: "Status", type: "select", options: ["todo", "in_progress", "done", "cancelled"], required: true },
+    { name: "recurrence", label: "Repeat", type: "select", options: ["none", "daily", "weekly", "monthly"], required: true },
     { name: "priority", label: "Priority", type: "select", options: ["high", "medium", "low"] }, { name: "due_date", label: "Due date", type: "datetime-local" },
   ] },
   { key: "goals", label: "Goals", table: "goals", display: "title", fields: [
@@ -90,7 +91,7 @@ const resources: Resource[] = [
     { name: "name", label: "Habit", required: true }, { name: "description", label: "Description", type: "textarea" },
     { name: "icon", label: "Icon", type: "select", options: ["Flame", "BookOpen", "Dumbbell", "Droplets", "Heart", "Leaf", "Moon", "Sun", "Target", "Zap"] },
     { name: "color", label: "Color", type: "select", options: ["violet", "blue", "teal", "amber", "rose", "green"] },
-    { name: "frequency", label: "Frequency", type: "select", options: ["daily", "weekly"] }, { name: "reminder_time", label: "Reminder time", type: "time" },
+    { name: "frequency", label: "Frequency", type: "select", options: ["daily", "weekly", "monthly"], required: true }, { name: "reminder_time", label: "Reminder time", type: "time" },
     { name: "is_active", label: "Active", type: "checkbox" },
   ] },
   { key: "habit_completions", label: "Habit check-ins", table: "habit_completions", display: "completed_on", fields: [
@@ -249,6 +250,17 @@ const groups = [
 
 const resourceFor = (key: string) => resources.find((resource) => resource.key === key);
 const resourceLabel = (key: string) => resourceFor(key)?.label ?? key;
+const editFieldNames: Record<string, string[]> = {
+  tasks: ["status"],
+  habits: ["is_active"],
+  transactions: ["amount"],
+  nutrition_entries: ["calories", "protein_g", "carbohydrates_g", "fat_g"],
+  water_entries: ["amount_ml"],
+};
+function fieldsForRecord(resource: Resource, editing: boolean) {
+  const allowedFields = editing ? editFieldNames[resource.key] : undefined;
+  return allowedFields ? resource.fields.filter((field) => allowedFields.includes(field.name)) : resource.fields;
+}
 const areaStyles: Record<string, { icon: LucideIcon; className: string }> = {
   Personal: { icon: UserRound, className: "area-personal" },
   Professional: { icon: BriefcaseBusiness, className: "area-professional" },
@@ -2022,7 +2034,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     mutationFn: async (values: Record<string, unknown>) => {
       if (!supabase) throw new Error("Supabase is not configured.");
       if (!online) throw new Error("You are offline. Changes have not been saved.");
-      const payload = cleanFormValues(values, resource.fields);
+      const payload = cleanFormValues(values, fieldsForRecord(resource, Boolean(editing)));
       if (resource.key === "tasks" && payload.status === "done") payload.completed_at = editing?.completed_at ?? new Date().toISOString();
       else if (resource.key === "tasks" && payload.status && payload.status !== "done") payload.completed_at = null;
       if (resource.key === "transactions" && !editing && payload.type === "expense") {
@@ -2329,6 +2341,7 @@ function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMark
       {linkedAccountName && <small className="payment-card-account">Linked to {linkedAccountName}</small>}
       <button className="payment-card-reveal" type="button" aria-label={`${revealed ? "Mask" : "Reveal"} last four card digits`} aria-pressed={revealed} onClick={() => setRevealed((value) => !value)}>{revealed ? <EyeOff size={13} /> : <Eye size={13} />}{revealed ? "Hide details" : "Reveal last four"}</button>
     </div> : <><div className="record-heading"><h3>{displayValue(row[resource.display])}</h3>{row.status ? <span className="badge">{String(row.status).replaceAll("_", " ")}</span> : null}
+        {resource.key === "tasks" && typeof row.recurrence === "string" && row.recurrence !== "none" && <span className="badge">{row.recurrence}</span>}
         {resource.key === "tasks" && typeof row.priority === "string" && <span className={`badge priority-badge priority-${row.priority}`}>{row.priority}</span>}
         {area && AreaIcon && <span className={`category-badge ${area.className}`}><AreaIcon size={12} />{String(row.area)}</span>}
       </div>
@@ -2377,6 +2390,7 @@ function LoanGroupCard({ group, online, onViewTransactions, onEdit, onDelete }: 
 }
 
 function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void }) {
+  const formFields = fieldsForRecord(resource, Boolean(initial));
   const defaults = useMemo<Record<string, unknown>>(() => ({
     ...Object.fromEntries(resource.fields.map((field) => [field.name, defaultValue(field, initial?.[field.name])])),
     funding_source: "account",
@@ -2387,11 +2401,11 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
     defaultValues: defaults,
   });
   useEffect(() => reset(defaults), [defaults, reset]);
-  const schema = useMemo(() => validateSchema(resource.fields), [resource.fields]);
-  const requiredFields = resource.fields.filter((field) => field.required);
+  const schema = useMemo(() => validateSchema(formFields), [formFields]);
+  const requiredFields = formFields.filter((field) => field.required);
   const transactionType = watch("type");
   const showFundingFields = resource.key === "transactions" && !initial && transactionType === "expense";
-  const optionalFields = resource.fields.filter((field) => !field.required && !(showFundingFields && field.name === "account_id"));
+  const optionalFields = formFields.filter((field) => !field.required && !(showFundingFields && field.name === "account_id"));
   const accountOptions = useRows("financial_accounts", userId, showFundingFields);
   const fundingSource = watch("funding_source");
   const transactionAmount = watch("amount");
@@ -2461,7 +2475,9 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
       <form onSubmit={(event) => void handleSubmit(submit)(event)} noValidate>
         <p className="record-form-hint">{resource.key === "personal_documents"
           ? "ID numbers are masked in the record list. Add only details you need to keep here."
-          : resource.key === "payment_cards"
+          : initial && editFieldNames[resource.key]
+            ? "Only status and measurement values can be changed here. Other record details stay the same."
+            : resource.key === "payment_cards"
             ? "Only the last four digits are stored. Never enter your full card number, PIN, or CVV."
             : initial ? "Update the fields you need. Optional details are grouped below." : "Start with the required details. You can add more information whenever you need."}</p>
         <div className="form-grid">{requiredFields.map(renderField)}</div>
