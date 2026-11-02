@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import {
   Activity, Bell, BookOpen, BriefcaseBusiness, CalendarDays, Droplets,
@@ -444,6 +444,19 @@ function App() {
   const [authError, setAuthError] = useState("");
   const [passwordRecovery, setPasswordRecovery] = useState(false);
 
+  useLayoutEffect(() => {
+    const savedTheme = localStorage.getItem("lifeos-theme");
+    const updateTheme = () => {
+      document.documentElement.dataset.theme = savedTheme === "light" || savedTheme === "dark"
+        ? savedTheme
+        : window.matchMedia("(prefers-color-scheme: dark)").matches ? "dark" : "light";
+    };
+    updateTheme();
+    const mediaQuery = window.matchMedia("(prefers-color-scheme: dark)");
+    mediaQuery.addEventListener("change", updateTheme);
+    return () => mediaQuery.removeEventListener("change", updateTheme);
+  }, []);
+
   useEffect(() => {
     const storedDemo = localStorage.getItem(DEMO_SESSION_KEY) === "true";
     if (!supabase) {
@@ -494,7 +507,7 @@ function PasswordUpdateScreen({ onDone }: { onDone: () => void }) {
     setSaving(false);
   }
   return <main className="auth-page"><section className="auth-card">
-    <div className="brand auth-brand"><span className="brandicon">✦</span> LifeOS</div>
+    <div className="brand auth-brand"><img className="auth-logo" src="/lifeos-logo.png" alt="LifeOS" /></div>
     <p className="eyebrow">PASSWORD RESET</p><h1>Choose a new password</h1>
     <form onSubmit={(event) => void submit(event)}><label>New password<input type="password" autoComplete="new-password" minLength={8} value={password} onChange={(event) => setPassword(event.target.value)} required /></label>
       {message && <p className="notice" role="alert">{message}</p>}<button className="primary full-width" disabled={saving}>{saving ? "Saving…" : "Update password"}</button></form>
@@ -503,7 +516,7 @@ function PasswordUpdateScreen({ onDone }: { onDone: () => void }) {
 
 function SetupScreen({ onDemo }: { onDemo: () => void }) {
   return <main className="auth-page"><section className="auth-card">
-    <div className="brand auth-brand"><span className="brandicon">✦</span> LifeOS</div>
+    <div className="brand auth-brand"><img className="auth-logo" src="/lifeos-logo.png" alt="LifeOS" /></div>
     <h1>Connect your Supabase project</h1>
     <p>Configure a Supabase project to sign in and persist your own records, or explore LifeOS with sample data.</p>
     <ol className="setup-steps">
@@ -557,7 +570,7 @@ function AuthScreen({ initialError, onDemo }: { initialError: string; onDemo: ()
     } finally { setSaving(false); }
   }
   return <main className="auth-page"><section className="auth-card">
-    <div className="brand auth-brand"><span className="brandicon">✦</span> LifeOS</div>
+    <div className="brand auth-brand"><img className="auth-logo" src="/lifeos-logo.png" alt="LifeOS" /></div>
     <p className="eyebrow">YOUR PERSONAL WORKSPACE</p>
     <h1>{mode === "signup" ? "Create your account" : mode === "reset" ? "Reset your password" : "Welcome back"}</h1>
     <form onSubmit={(event) => void submit(event)}>
@@ -759,11 +772,14 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   return <div className={`app ${displayTheme}`}>
     {mobile && <button aria-label="Close navigation" className="scrim" onClick={closeMobile} />}
     <aside className={`sidebar ${mobile ? "show" : ""}`}>
-      <div className="brand"><span className="brandicon">✦</span> LifeOS<button className="close" aria-label="Close navigation" onClick={closeMobile}><X /></button></div>
+      <div className="brand"><img className="brandicon" src="/icons/lifeos-mark.png" alt="" /> LifeOS<button className="close" aria-label="Close navigation" onClick={closeMobile}><X /></button></div>
       <div className="workspace-label">YOUR WORKSPACE</div>
       <nav className="side-nav" aria-label="Main navigation">
         <button className={`nav-group-title ${pageKey === "overview" ? "nav-group-active" : ""}`} onClick={() => navigateTo("overview")} aria-current={pageKey === "overview" ? "page" : undefined}>
           <LayoutDashboard size={14} /><span>Main dashboard</span>
+        </button>
+        <button className={`nav-group-title ${pageKey === "today" ? "nav-group-active" : ""}`} onClick={() => navigateTo("today")} aria-current={pageKey === "today" ? "page" : undefined}>
+          <CalendarDays size={14} /><span>Today &amp; Tomorrow</span>
         </button>
         {groups.map((group) => <button key={group.title} className={`nav-group-title ${pageKey === group.dashboardKey ? "nav-group-active" : ""}`} onClick={() => navigateTo(group.dashboardKey)} aria-current={pageKey === group.dashboardKey ? "page" : undefined}>
             <group.icon size={14} /><span>{group.title}</span><ChevronRight size={13} className="nav-group-arrow" />

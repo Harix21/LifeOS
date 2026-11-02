@@ -1,10 +1,9 @@
 import type { ReactNode } from "react";
-import { Heart, LayoutDashboard } from "lucide-react";
+import { LayoutDashboard } from "lucide-react";
 import "./personal-workspace.css";
 
 const links = [
   { key: "personal_dashboard", label: "My day" },
-  { key: "today", label: "Today & tomorrow" },
   { key: "tasks", label: "Tasks" },
   { key: "goals", label: "Goals" },
   { key: "habits", label: "Habits" },
@@ -20,7 +19,7 @@ export function PersonalWorkspace({ activePage, onNavigate, children }: {
 }) {
   return <section className="workspace-app personal-app">
     <header className="personal-app-header">
-      <div className="personal-app-brand"><span><Heart size={17} /></span><div><small>PERSONAL SPACE</small><b>Your everyday life</b></div></div>
+      <div className="personal-app-brand"><img className="workspace-brand-mark" src="/icons/lifeos-mark.png" alt="" /><div><small>PERSONAL SPACE</small><b>Your everyday life</b></div></div>
       <nav className="personal-app-nav" aria-label="Personal workspace">
         {links.map((link) => <button key={link.key} className={activePage === link.key ? "selected" : ""} aria-current={activePage === link.key ? "page" : undefined} onClick={() => onNavigate(link.key)}>{link.label}</button>)}
       </nav>

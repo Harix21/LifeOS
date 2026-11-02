@@ -15,10 +15,12 @@
 .projects-app .panel{border-color:#e2e5f0;box-shadow:0 6px 20px #27335a08}
 .projects-app .data-line{min-height:54px}
 @keyframes projects-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
-.dark .projects-app{border-color:#323b5c;background:#161b2d}
+.dark .projects-app{border-color:#323b5c;background:#161b2d;color:var(--text)}
 .dark .projects-app-header{border-color:#313951;background:#1a2134}
+.dark .projects-app-brand small{color:#aab5dc}
 .dark .projects-app-brand b{color:#e5e9ff}
 .dark .projects-app-header nav button,.dark .projects-app-home{color:#a8b1d1}
+.dark .projects-app-header nav button:hover,.dark .projects-app-home:hover{background:#292f50;color:#d0d6ff}
 .dark .projects-app-header nav button.selected{border-color:#414c79;background:#292f50;color:#c4ccff}
 .dark .projects-app-content{background:linear-gradient(135deg,#161b2d,#1a2035)}
 .dark .projects-app .panel{border-color:#303951}

@@ -9,10 +9,10 @@
   "theme_color": "#101827",
   "icons": [
     {
-      "src": "/icons/lifeos.svg",
-      "sizes": "any",
-      "type": "image/svg+xml",
-      "purpose": "any maskable"
+      "src": "/icons/lifeos-mark.png",
+      "sizes": "512x512",
+      "type": "image/png",
+      "purpose": "any"
     }
   ]
 }

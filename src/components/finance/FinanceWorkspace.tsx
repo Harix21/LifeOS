@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { ArrowLeftRight, ChartNoAxesCombined, LayoutDashboard, Wallet } from "lucide-react";
+import { ArrowLeftRight, ChartNoAxesCombined, LayoutDashboard } from "lucide-react";
 import "./finance-workspace.css";
 
 const links = [
@@ -21,7 +21,7 @@ export function FinanceWorkspace({ activePage, onNavigate, children }: {
 }) {
   return <section className="workspace-app finance-app">
     <aside className="finance-app-rail">
-      <div className="finance-app-brand"><span><Wallet size={19} /></span><div><small>FINANCE DESK</small><b>Money, organized</b></div></div>
+      <div className="finance-app-brand"><img className="workspace-brand-mark" src="/icons/lifeos-mark.png" alt="" /><div><small>FINANCE DESK</small><b>Money, organized</b></div></div>
       <p className="finance-app-caption">YOUR MONEY</p>
       <nav aria-label="Finance workspace">{links.map((link) => <button key={link.key} className={activePage === link.key ? "selected" : ""} aria-current={activePage === link.key ? "page" : undefined} onClick={() => onNavigate(link.key)}>
         {link.key === "transactions" ? <ArrowLeftRight size={14} /> : link.key === "finance_dashboard" ? <ChartNoAxesCombined size={14} /> : <span className="finance-nav-dot" />}<span>{link.label}</span>

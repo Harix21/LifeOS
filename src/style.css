@@ -1,7 +1,7 @@
 @import "tailwindcss";
 *{box-sizing:border-box}
-:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-synthesis:none;text-rendering:optimizeLegibility;font-optical-sizing:auto;font-weight:400;color-scheme:light;--panel:#fff;--line:#e4e9f1;--muted:#758198}
-:root[data-theme=dark]{color-scheme:dark;--panel:#182337;--line:#29364b;--muted:#97a5bc}
+:root{font-family:Inter,ui-sans-serif,system-ui,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;font-synthesis:none;text-rendering:optimizeLegibility;font-optical-sizing:auto;font-weight:400;color-scheme:light;--bg:#f3f5fa;--panel:#fff;--text:#172237;--line:#e4e9f1;--muted:#758198;--accent:#5d7fe7}
+:root[data-theme=dark]{color-scheme:dark;--bg:#101827;--panel:#182337;--text:#eaf0fb;--line:#29364b;--muted:#97a5bc;--accent:#7894f4}
 body{margin:0;min-width:320px;min-height:100vh;background:#f3f5fa;color:#172237}
 button,input,select,textarea{font:inherit}
 button{cursor:pointer}
@@ -12,7 +12,8 @@ svg{flex-shrink:0}
 .app.dark{--bg:#101827;--panel:#182337;--text:#eaf0fb;--muted:#97a5bc;--line:#29364b;--sidebar:#0b1220;--sidebar-text:#a7b3c8;--accent:var(--user-accent,#7894f4);--accent-soft:#253354;--danger:#f08080;--success:#55c29c;--priority-high:#f08080;--priority-medium:#edbd6c;--priority-low:#8da7ff;color-scheme:dark}
 .sidebar{position:fixed;z-index:10;inset:0 auto 0 0;width:254px;background:var(--sidebar);color:var(--sidebar-text);padding:20px 13px 15px;display:flex;flex-direction:column;overflow:auto;scrollbar-width:thin}
 .brand{font-size:19px;font-weight:800;letter-spacing:-.7px;color:#fff;display:flex;align-items:center;gap:10px;padding:3px 8px 17px}
-.brandicon{width:32px;height:32px;border-radius:10px;background:#5b7fea;color:#fff;display:grid;place-items:center;font-size:20px}
+.brandicon{width:34px;height:34px;flex:0 0 34px;border-radius:6px;background:#fff;object-fit:cover}
+.workspace-brand-mark{width:36px;height:36px;flex:0 0 36px;border-radius:7px;background:#fff;object-fit:cover}
 .workspace-label{font-size:9px;letter-spacing:1.35px;font-weight:700;color:#72819a;padding:3px 12px 12px}
 .side-nav{overflow:auto;scrollbar-width:thin}
 .nav-group{margin:0 0 8px}
@@ -386,6 +387,7 @@ svg{flex-shrink:0}
 .dark .calendar-event-chip.area-professional{background:#203b34;color:#75d6ac}
 .dark .calendar-event-chip.area-fitness{background:#493629;color:#f1ad79}
 .dark .calendar-event-chip.area-finance{background:#3d2c49;color:#d9a8f3}
+.dark .calendar-event-chip.area-personal{background:#293859;color:#b5c5ff}
 .calendar-cell-events>small{color:var(--muted);font-size:8px}
 .report-filters{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:11px 13px;border:1px solid var(--line);border-radius:10px;background:var(--panel)}
 .report-filters label{display:flex;align-items:center;gap:7px;color:var(--muted);font-size:9px}
@@ -470,10 +472,11 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
 @keyframes overlay-enter{from{opacity:0}to{opacity:1}}
 @keyframes modal-enter{from{opacity:0;transform:translateY(8px) scale(.985)}to{opacity:1;transform:translateY(0) scale(1)}}
 @keyframes toast-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.auth-page{min-height:100vh;display:grid;place-items:center;padding:18px;background:#f3f5fa;color:#172237}
-.dark .auth-page{background:#101827;color:#eaf0fb}
+.auth-page{min-height:100vh;display:grid;place-items:center;padding:18px;background:var(--bg);color:var(--text)}
+.auth-card{color:var(--text)}
 .auth-card{width:min(440px,100%);padding:27px;background:var(--panel);border:1px solid var(--line);border-radius:15px;box-shadow:0 15px 50px #07122a16}
-.auth-brand{padding:0 0 26px;color:var(--text)}
+.auth-brand{justify-content:center;padding:0 0 20px;color:var(--text)}
+.auth-logo{display:block;width:min(250px,80%);height:auto;object-fit:contain}
 .auth-card h1{font-size:24px;letter-spacing:-.7px;margin:7px 0 10px}
 .auth-card>p:not(.eyebrow){color:var(--muted);font-size:11px;line-height:1.6}
 .auth-card form{display:grid;gap:13px;margin-top:16px}

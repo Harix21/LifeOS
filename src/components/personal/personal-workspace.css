@@ -14,3 +14,11 @@
 .personal-app-content>.page{animation:personal-enter .28s ease both}
 @keyframes personal-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
 @media(max-width:620px){.personal-app{border-radius:14px}.personal-app-header{gap:12px;padding:13px}.personal-app-brand{min-width:0;flex:1}.personal-app-nav{order:3;flex-basis:100%;overflow-x:auto;flex-wrap:nowrap}.personal-app-nav button{white-space:nowrap}.personal-app-content{padding:13px}}
+.dark .personal-app{--workspace-ink:#e7e1f4;border-color:#39304d;background:#171523;color:var(--text)}
+.dark .personal-app-header{border-color:#39304d;background:linear-gradient(110deg,#1d1a2a,#211b30)}
+.dark .personal-app-brand small{color:#b5a7d0}
+.dark .personal-app-nav button,.dark .personal-app-home{color:#c3b9d5}
+.dark .personal-app-nav button:hover,.dark .personal-app-home:hover{background:#342a48;color:#e3d3ff}
+.dark .personal-app-nav button.selected{background:#392b54;color:#e3d3ff}
+.dark .personal-app-home{border-color:#39304d;background:#211e2c}
+.dark .personal-app-content{background:radial-gradient(ellipse at 3% 0%,#282038 0,transparent 36%),#171523}

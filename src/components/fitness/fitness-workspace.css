@@ -16,7 +16,8 @@
 .fitness-app .panel{border-color:#dfebe2;box-shadow:0 7px 22px #193c2a08}
 .fitness-app .stat{border-color:#dfebe2}
 @keyframes fitness-enter{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:translateY(0)}}
-.dark .fitness-app{border-color:#27483d;background:#11251f}
+.dark .fitness-app{border-color:#27483d;background:#11251f;color:var(--text)}
+.dark .fitness-app-header{background:linear-gradient(120deg,#102a23,#174432 68%,#1d523d)}
 .dark .fitness-app-content{background:radial-gradient(ellipse at 100% 0%,#1b3b2b 0,transparent 36%),#11251f}
 .dark .fitness-app .panel,.dark .fitness-app .stat{border-color:#294b3b}
 @media(max-width:620px){.fitness-app{border-radius:14px}.fitness-app-header{padding:14px 13px 0}.fitness-app-nav{gap:2px;overflow-x:auto;flex-wrap:nowrap}.fitness-app-nav button{padding:8px;white-space:nowrap}.fitness-app-nav .fitness-app-home{margin-left:0}.fitness-app-content{padding:13px}}

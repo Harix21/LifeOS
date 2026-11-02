@@ -1,5 +1,5 @@
-const CACHE = "lifeos-shell-v2";
-const APP_SHELL = ["/", "/manifest.webmanifest", "/icons/lifeos.svg"];
+const CACHE = "lifeos-shell-v4";
+const APP_SHELL = ["/", "/manifest.webmanifest", "/lifeos-logo.png", "/icons/lifeos-mark.png", "/icons/lifeos-favicon.png"];
 
 self.addEventListener("install", (event) => {
   event.waitUntil(caches.open(CACHE).then((cache) => cache.addAll(APP_SHELL)).then(() => self.skipWaiting()));

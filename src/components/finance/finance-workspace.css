@@ -17,8 +17,9 @@
 .finance-app .panel,.finance-app .stat{border-color:#e0eae3;box-shadow:0 7px 20px #163c2a08}
 .finance-app .title h1{letter-spacing:-.7px}
 @keyframes finance-enter{from{opacity:0;transform:translateY(7px)}to{opacity:1;transform:translateY(0)}}
-.dark .finance-app{border-color:#264539;background:#12221b}
+.dark .finance-app{border-color:#264539;background:#12221b;color:var(--text)}
 .dark .finance-app-rail{border-color:#29483b;background:linear-gradient(180deg,#172c22,#14241c)}
+.dark .finance-app-brand small,.dark .finance-app-caption{color:#9fc3ae}
 .dark .finance-app-brand b{color:#e0f1e4}
 .dark .finance-app-rail nav button,.dark .finance-app-home{color:#a7c3b0}
 .dark .finance-app-rail nav button.selected{background:#244633;color:#a6e3c0}

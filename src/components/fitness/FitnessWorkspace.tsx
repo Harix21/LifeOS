@@ -1,5 +1,5 @@
 import type { ReactNode } from "react";
-import { Activity, Dumbbell, LayoutDashboard } from "lucide-react";
+import { Activity, LayoutDashboard } from "lucide-react";
 import "./fitness-workspace.css";
 
 const links = [
@@ -22,7 +22,7 @@ export function FitnessWorkspace({ activePage, onNavigate, children }: {
 }) {
   return <section className="workspace-app fitness-app">
     <header className="fitness-app-header">
-      <div className="fitness-app-title"><span><Dumbbell size={18} /></span><div><small>FITNESS CLUB</small><b>Training log</b></div><i><Activity size={13} /> YOUR PACE</i></div>
+      <div className="fitness-app-title"><img className="workspace-brand-mark" src="/icons/lifeos-mark.png" alt="" /><div><small>FITNESS CLUB</small><b>Training log</b></div><i><Activity size={13} /> YOUR PACE</i></div>
       <nav className="fitness-app-nav" aria-label="Fitness workspace">
         {links.map((link) => <button key={link.key} className={activePage === link.key ? "selected" : ""} aria-current={activePage === link.key ? "page" : undefined} onClick={() => onNavigate(link.key)}>{link.label}</button>)}
         <button className="fitness-app-home" onClick={() => onNavigate("overview")}><LayoutDashboard size={13} /> LifeOS</button>
