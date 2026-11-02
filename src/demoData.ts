@@ -143,9 +143,9 @@ export function getDemoRows(table: string, userId: string): DemoRow[] {
       row(452, { session_id: "00000000-0000-4000-8000-000000000442", exercise_id: null, exercise_name: "Dumbbell row", sets: 3, reps: 12, weight_kg: 12 }, userId),
     ],
     nutrition_entries: [
-      row(461, { description: "Oats, banana and yogurt", calories: 420, protein_g: 21, carbohydrates_g: 62, fat_g: 10, consumed_at: atTime(today, 8) }, userId),
-      row(462, { description: "Paneer and grain bowl", calories: 610, protein_g: 32, carbohydrates_g: 68, fat_g: 22, consumed_at: atTime(today, 13) }, userId),
-      row(463, { description: "Vegetable soup", calories: 280, protein_g: 12, carbohydrates_g: 34, fat_g: 9, consumed_at: atTime(yesterday, 19) }, userId),
+      row(461, { description: "Oats, banana and yogurt", meal_type: "breakfast", calories: 420, protein_g: 21, carbohydrates_g: 62, fat_g: 10, consumed_at: atTime(today, 8) }, userId),
+      row(462, { description: "Paneer and grain bowl", meal_type: "lunch", calories: 610, protein_g: 32, carbohydrates_g: 68, fat_g: 22, consumed_at: atTime(today, 13) }, userId),
+      row(463, { description: "Vegetable soup", meal_type: "dinner", calories: 280, protein_g: 12, carbohydrates_g: 34, fat_g: 9, consumed_at: atTime(yesterday, 19) }, userId),
     ],
     water_entries: [
       row(471, { amount_ml: 400, consumed_at: atTime(today, 7, 30) }, userId),

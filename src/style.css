@@ -238,6 +238,31 @@ svg{flex-shrink:0}
 .habit-calendar-list{display:grid}
 .habit-calendar-row{display:flex;align-items:center;gap:9px;min-height:47px;border-top:1px solid var(--line);font-size:10px}
 .habit-calendar-row>span:nth-child(2){flex:1;min-width:0;overflow-wrap:anywhere}
+.record-inline-fields{display:flex;align-items:flex-end;gap:8px;flex-wrap:wrap;margin-top:9px;padding:8px;border-radius:8px;background:var(--bg)}
+.inline-record-field{display:flex;flex-direction:column;gap:4px;min-width:88px;max-width:170px;color:var(--muted);font-size:9px}
+.inline-record-field small{font-size:8px}
+.inline-record-field input:not([type=checkbox]),.inline-record-field select{width:100%;min-height:28px;padding:4px 6px;border:1px solid var(--line);border-radius:6px;background:var(--panel);color:var(--text);font-size:9px}
+.inline-record-checkbox input{align-self:flex-start;accent-color:var(--accent)}
+.habit-record-calendar{margin-top:5px}
+.habit-record-calendar-toggle{font-size:9px}
+.habit-record-calendar-content{margin-top:8px}
+.habit-record-calendar-day{min-height:43px;gap:2px}
+.habit-record-calendar-day.checked-day{background:color-mix(in srgb,var(--success) 10%,var(--panel))}
+.habit-record-calendar-day.checked-day small{color:var(--success)}
+.habit-record-calendar-day:disabled{cursor:not-allowed}
+.nutrition-insights-grid{display:grid;grid-template-columns:minmax(0,1.25fr) minmax(0,1fr);gap:14px;align-items:start}
+.nutrition-trends,.nutrition-calendar{min-width:0;padding:16px}
+.nutrition-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:12px;margin-top:10px}
+.nutrition-chart-grid h3{margin:0 0 7px;font-size:10px}
+.nutrition-chart-grid .chart{height:195px}
+.nutrition-calendar-day small{font-size:7px}
+.nutrition-day-summary{display:flex;align-items:center;justify-content:space-between;gap:10px;margin:12px 0 6px;font-size:10px}
+.nutrition-day-summary span,.nutrition-meal-row small,.nutrition-empty-day{color:var(--muted);font-size:9px}
+.nutrition-meal-list{display:grid}
+.nutrition-meal-row{display:flex;align-items:center;justify-content:space-between;gap:10px;padding:9px 0;border-top:1px solid var(--line);font-size:9px}
+.nutrition-meal-row>div{display:grid;gap:3px;min-width:0}
+.nutrition-meal-row b{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.nutrition-empty-day{margin:12px 0 4px}
 .daily-agenda-grid,.finance-dashboard-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px;align-items:start}
 .daily-date-filter{display:flex;align-items:flex-end;gap:10px;margin:0 0 14px}
 .daily-date-filter label{display:grid;gap:5px;color:var(--muted);font-size:10px}
@@ -516,7 +541,7 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
   .stat b{font-size:16px}
   .stat small{font-size:9px}
   .stat p{font-size:8px}
-  .dashboard-grid,.area-dashboard-grid,.settings-grid,.task-insights-grid,.habit-insights-grid,.daily-agenda-grid,.finance-dashboard-grid,.finance-summary-grid{grid-template-columns:1fr;gap:11px}
+  .dashboard-grid,.area-dashboard-grid,.settings-grid,.task-insights-grid,.habit-insights-grid,.daily-agenda-grid,.finance-dashboard-grid,.finance-summary-grid,.nutrition-insights-grid,.nutrition-chart-grid{grid-template-columns:1fr;gap:11px}
   .record-insight-metrics,.record-profile-metrics{grid-template-columns:repeat(2,minmax(0,1fr))}
   .journal-settings-panel{grid-column:auto}
   .journal-profile-options{grid-template-columns:1fr}

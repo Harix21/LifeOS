@@ -154,7 +154,8 @@ const resources: Resource[] = [
     { name: "reps", label: "Reps", type: "number", min: 1 }, { name: "weight_kg", label: "Weight (kg)", type: "number", min: 0 },
   ] },
   { key: "nutrition_entries", label: "Nutrition", table: "nutrition_entries", display: "description", fields: [
-    { name: "description", label: "Food / meal", required: true }, { name: "calories", label: "Calories", type: "number", min: 0 },
+    { name: "description", label: "Food / meal", required: true }, { name: "meal_type", label: "Meal", type: "select", options: ["breakfast", "lunch", "evening", "dinner"], required: true },
+    { name: "calories", label: "Calories", type: "number", min: 0 },
     { name: "protein_g", label: "Protein (g)", type: "number", min: 0 }, { name: "carbohydrates_g", label: "Carbohydrates (g)", type: "number", min: 0 },
     { name: "fat_g", label: "Fat (g)", type: "number", min: 0 }, { name: "consumed_at", label: "Consumed at", type: "datetime-local" },
   ] },
@@ -1265,7 +1266,7 @@ function PersonalDashboard({ userId, name, onNavigate, onQuickAdd }: { userId: s
   const error = queries.find((query) => query.error);
   const loading = queries.some((query) => query.isLoading);
   const openTasks = (tasks.data ?? []).filter((task) => task.status !== "done" && task.status !== "cancelled" && task.area === "Personal");
-  const activeGoals = (goals.data ?? []).filter((goal) => goal.area === "Personal" && goal.status === "active");
+  const activeGoals = (goals.data ?? []).filter((goal) => goal.status === "active");
   const activeHabits = (habits.data ?? []).filter((habit) => habit.is_active);
   const todayChecks = (completions.data ?? []).filter((item) => item.completed_on === today());
   const recentMood = [...(moods.data ?? [])].sort((a, b) => String(b.recorded_at).localeCompare(String(a.recorded_at)))[0];
@@ -1286,8 +1287,8 @@ function PersonalDashboard({ userId, name, onNavigate, onQuickAdd }: { userId: s
       <div className="area-dashboard-grid">
         <section className="panel"><PanelHeading title="Personal task rhythm" detail="Completed tasks by day · last 7 days" action={() => onNavigate("tasks")} actionLabel="Open tasks" />
           {trend.some((point) => point.completed) ? <div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={trend}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><Tooltip /><Area type="monotone" dataKey="completed" name="Completed" stroke="#7186e8" fill="#7186e833" /></AreaChart></ResponsiveContainer></div> : <ChartEmpty text="Finish a personal task to begin your weekly activity chart." />}</section>
-        <section className="panel"><PanelHeading title="Goals in progress" detail="Your personal milestones" action={() => onNavigate("goals")} actionLabel="All goals" />
-          {activeGoals.length ? activeGoals.slice(0, 5).map((goal) => { const target = Number(goal.target_value ?? 0); const current = Number(goal.current_value ?? 0); return <div className="area-progress-row" key={goal.id}><div><b>{String(goal.title)}</b><small>{target ? `${Math.round(current / target * 100)}% · ${current} / ${target}` : "Set a target to track progress"}</small></div>{target > 0 && <progress max={target} value={Math.min(current, target)} aria-label={`${String(goal.title)} progress`} />}</div>; }) : <EmptyState title="No personal goals yet" detail="Add a goal to make your next milestone visible." action={<button className="text-button" onClick={() => onQuickAdd("goals")}><Plus size={14} /> Add a goal</button>} />}
+        <section className="panel"><PanelHeading title="Goals in progress" detail="Active goals across every category" action={() => onNavigate("goals")} actionLabel="All goals" />
+          {activeGoals.length ? activeGoals.map((goal) => { const target = Number(goal.target_value ?? 0); const current = Number(goal.current_value ?? 0); return <div className="area-progress-row" key={goal.id}><div><b>{String(goal.title)}</b><CategoryBadge area={String(goal.area ?? "Personal")} /><small>{target ? `${Math.round(current / target * 100)}% · ${current} / ${target}` : "Set a target to track progress"}</small></div>{target > 0 && <progress max={target} value={Math.min(current, target)} aria-label={`${String(goal.title)} progress`} />}</div>; }) : <EmptyState title="No active goals yet" detail="Add a goal to make your next milestone visible." action={<button className="text-button" onClick={() => onQuickAdd("goals")}><Plus size={14} /> Add a goal</button>} />}
         </section>
         <section className="panel"><PanelHeading title="Today's routine" detail={`${todayChecks.length} of ${activeHabits.length} active habits checked in`} action={() => onNavigate("habits")} actionLabel="Manage habits" />
           {activeHabits.length ? activeHabits.slice(0, 6).map((habit) => { const Icon = habitIcons[String(habit.icon)] ?? Flame; const checked = todayChecks.some((item) => item.habit_id === habit.id); return <div className="data-line" key={habit.id}><span className={`habit-icon habit-color-${String(habit.color ?? "violet")}`}><Icon size={15} /></span><div className="line-main"><b>{String(habit.name)}</b><small>{checked ? "Complete today" : "Ready for a check-in"}</small></div><span className={`badge ${checked ? "badge-complete" : ""}`}>{checked ? "Done" : "Open"}</span></div>; }) : <ChartEmpty text="Add a habit to start building your routine." />}
@@ -1631,6 +1632,80 @@ function TaskInsights({ rows }: { rows: Row[] }) {
   </div>;
 }
 
+function NutritionInsights({ rows }: { rows: Row[] }) {
+  const [month, setMonth] = useState(() => today().slice(0, 7));
+  const [selectedDate, setSelectedDate] = useState(today);
+  const anchor = new Date(`${month}-01T12:00:00`);
+  const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(gridStart.getDate() - ((gridStart.getDay() + 6) % 7));
+  const days = Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
+  const weekdayLabels = Array.from({ length: 7 }, (_, index) => new Date(2024, 0, index + 1).toLocaleDateString(undefined, { weekday: "short" }));
+  const byDate = new Map<string, { entries: Row[]; calories: number; protein: number; carbohydrates: number; fat: number }>();
+  for (const row of rows) {
+    const date = recordDateKey(row.consumed_at);
+    if (!date) continue;
+    const daily = byDate.get(date) ?? { entries: [], calories: 0, protein: 0, carbohydrates: 0, fat: 0 };
+    daily.entries.push(row);
+    daily.calories += Number(row.calories ?? 0);
+    daily.protein += Number(row.protein_g ?? 0);
+    daily.carbohydrates += Number(row.carbohydrates_g ?? 0);
+    daily.fat += Number(row.fat_g ?? 0);
+    byDate.set(date, daily);
+  }
+  const chartData = Array.from({ length: new Date(anchor.getFullYear(), anchor.getMonth() + 1, 0).getDate() }, (_, index) => {
+    const date = localDateKey(new Date(anchor.getFullYear(), anchor.getMonth(), index + 1, 12));
+    const daily = byDate.get(date);
+    return { day: String(index + 1), calories: daily?.calories ?? 0, protein: daily?.protein ?? 0, carbohydrates: daily?.carbohydrates ?? 0, fat: daily?.fat ?? 0 };
+  });
+  const selected = byDate.get(selectedDate);
+  const shiftMonth = (amount: number) => {
+    const nextMonth = localDateKey(addMonths(anchor, amount)).slice(0, 7);
+    setMonth(nextMonth);
+    setSelectedDate(`${nextMonth}-01`);
+  };
+  return <div className="nutrition-insights-grid">
+    <section className="panel nutrition-trends">
+      <PanelHeading title="Daily nutrition" detail="Calories and macronutrients · selected month" />
+      {rows.length ? <>
+        <div className="nutrition-chart-grid">
+          <div><h3>Calories</h3><div className="chart"><ResponsiveContainer width="100%" height="100%"><AreaChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><Tooltip labelFormatter={(day) => `${month}-${String(day).padStart(2, "0")}`} /><Area type="monotone" dataKey="calories" name="Calories" stroke="#e78b6e" fill="#e78b6e33" /></AreaChart></ResponsiveContainer></div></div>
+          <div><h3>Macros (g)</h3><div className="chart"><ResponsiveContainer width="100%" height="100%"><LineChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis allowDecimals={false} tickLine={false} axisLine={false} /><Tooltip labelFormatter={(day) => `${month}-${String(day).padStart(2, "0")}`} /><Legend /><Line type="monotone" dataKey="protein" name="Protein" stroke="#6888ee" dot={false} /><Line type="monotone" dataKey="carbohydrates" name="Carbohydrates" stroke="#37ad83" dot={false} /><Line type="monotone" dataKey="fat" name="Fat" stroke="#d18b53" dot={false} /></LineChart></ResponsiveContainer></div></div>
+        </div>
+      </> : <ChartEmpty text="Log a meal to see your daily calorie and macro trends." />}
+    </section>
+    <section className="panel nutrition-calendar">
+      <div className="habit-calendar-heading">
+        <div><h2>Nutrition calendar</h2><p>Select a date to review meals and totals.</p></div>
+        <div className="habit-calendar-controls">
+          <button className="icon" aria-label="Previous month" onClick={() => shiftMonth(-1)}><ChevronLeft size={14} /></button>
+          <b>{anchor.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</b>
+          <button className="icon" aria-label="Next month" onClick={() => shiftMonth(1)}><ChevronRight size={14} /></button>
+        </div>
+      </div>
+      <div className="habit-calendar-grid" role="group" aria-label="Nutrition calendar">
+        {weekdayLabels.map((day) => <span className="calendar-weekday" key={day}>{day}</span>)}
+        {days.map((date) => {
+          const dateKey = localDateKey(date);
+          const daily = byDate.get(dateKey);
+          return <button key={dateKey}
+            className={`habit-calendar-day nutrition-calendar-day ${date.getMonth() !== anchor.getMonth() ? "outside-month" : ""} ${dateKey === today() ? "today-cell" : ""} ${dateKey === selectedDate ? "selected" : ""}`}
+            onClick={() => { setSelectedDate(dateKey); if (date.getMonth() !== anchor.getMonth()) setMonth(dateKey.slice(0, 7)); }}
+            aria-pressed={dateKey === selectedDate}
+            aria-label={`${date.toLocaleDateString()}, ${daily?.entries.length ?? 0} meals, ${daily?.calories ?? 0} calories`}>
+            <span>{date.getDate()}</span>{daily && <small>{daily.calories} kcal</small>}
+          </button>;
+        })}
+      </div>
+      <div className="nutrition-day-summary"><b>{configuredDate(selectedDate)}</b><span>{selected?.entries.length ?? 0} meals · {selected?.calories ?? 0} kcal</span></div>
+      {selected?.entries.length ? <div className="nutrition-meal-list">{selected.entries.slice().sort((a, b) => String(a.consumed_at).localeCompare(String(b.consumed_at))).map((entry) => <div className="nutrition-meal-row" key={entry.id}>
+        <div><b>{String(entry.description)}</b><small>{String(entry.meal_type ?? "meal")} · {configuredDate(String(entry.consumed_at))}</small></div>
+        <span>{Number(entry.calories ?? 0)} kcal</span>
+      </div>)}</div> : <p className="nutrition-empty-day">No meals recorded for this day.</p>}
+    </section>
+  </div>;
+}
+
 function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] }) {
   type Point = { label: string; value: number; compare?: number };
   type ChartType = "bar" | "line" | "pie" | "metrics";
@@ -1886,6 +1961,32 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       const payload = cleanFormValues(values, resource.fields);
       if (resource.key === "tasks" && payload.status === "done") payload.completed_at = editing?.completed_at ?? new Date().toISOString();
       else if (resource.key === "tasks" && payload.status && payload.status !== "done") payload.completed_at = null;
+      const borrowedFrom = String(values.borrowed_from ?? "").trim();
+      const rawBorrowedAmount = values.borrowed_amount;
+      const hasBorrowingDetails = Boolean(borrowedFrom)
+        || (typeof rawBorrowedAmount === "number" && Number.isFinite(rawBorrowedAmount));
+      if (resource.key === "transactions" && !editing && payload.type === "expense" && hasBorrowingDetails) {
+        const borrowedAmount = Number(rawBorrowedAmount);
+        if (!borrowedFrom || !Number.isFinite(borrowedAmount) || borrowedAmount <= 0) {
+          throw new Error("Enter both the person you borrowed from and the borrowed amount.");
+        }
+        if (borrowedAmount > Number(payload.amount)) {
+          throw new Error("The borrowed amount cannot exceed the expense total.");
+        }
+        const { error } = await supabase.rpc("create_expense_with_borrowing", {
+          p_user_id: userId,
+          p_title: String(payload.title),
+          p_amount: Number(payload.amount),
+          p_transaction_date: String(payload.transaction_date),
+          p_account_id: payload.account_id ?? null,
+          p_category_id: payload.category_id ?? null,
+          p_notes: payload.notes ?? null,
+          p_borrowed_from: borrowedFrom,
+          p_borrowed_amount: borrowedAmount,
+        });
+        if (error) throw error;
+        return null;
+      }
       const result = resource.table === "fitness_profiles"
         ? await supabase.from(resource.table).upsert({ ...payload, user_id: userId }, { onConflict: "user_id" }).select().single()
         : editing
@@ -1896,6 +1997,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     },
     onSuccess: async () => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
+      if (resource.key === "transactions") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "loans"] });
       setDialog(false); setEditing(null); onToast(`${resource.label} saved.`);
     },
     onError: (error) => onToast(`Could not save ${resource.label.toLowerCase()}: ${error.message}`, true),
@@ -1924,6 +2026,25 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       onToast("Task priority updated.");
     },
     onError: (error) => onToast(`Could not update task priority: ${error.message}`, true),
+  });
+  const updateInlineField = useMutation({
+    mutationFn: async ({ row, field, value }: { row: Row; field: Field; value: unknown }) => {
+      if (!online) throw new Error("You are offline. The record was not changed.");
+      if (!supabase) throw new Error("Supabase is not configured.");
+      const patch: Record<string, unknown> = { [field.name]: value };
+      if (resource.key === "tasks" && field.name === "status") {
+        patch.completed_at = value === "done" ? row.completed_at ?? new Date().toISOString() : null;
+      }
+      const { data, error } = await supabase.from(resource.table).update(patch)
+        .eq("id", row.id).eq("user_id", userId).select("id").maybeSingle();
+      if (error) throw error;
+      if (!data) throw new Error("The record could not be found or updated.");
+    },
+    onSuccess: async (_, variables) => {
+      await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
+      onToast(`${variables.field.label} updated.`);
+    },
+    onError: (error, variables) => onToast(`Could not update ${variables.field.label.toLowerCase()}: ${error.message}`, true),
   });
   const toggleHabitCheckin = useMutation({
     mutationFn: async ({ habitId, date, checked }: { habitId: string; date: string; checked: boolean }) => {
@@ -1975,7 +2096,8 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     {rows.error && <ErrorState error={rows.error} onRetry={() => void rows.refetch()} />}
     {resource.key === "tasks" && <TaskInsights rows={rows.data ?? []} />}
     {resource.key === "habits" ? <>{habitCompletions.error && <ErrorState error={habitCompletions.error} onRetry={() => void habitCompletions.refetch()} />}<HabitInsights habits={rows.data ?? []} completions={habitCompletions.data ?? []} loading={habitCompletions.isLoading} online={online} busy={toggleHabitCheckin.isPending} onToggleCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })} /></>
-      : resource.key !== "tasks" && <RecordInsights resource={resource} rows={rows.data ?? []} />}
+      : resource.key === "nutrition_entries" ? <NutritionInsights rows={rows.data ?? []} />
+        : resource.key !== "tasks" && <RecordInsights resource={resource} rows={rows.data ?? []} />}
     {rows.isLoading ? <LoadingState /> : <section className="panel records-panel">
       <div className="records-toolbar"><div><h2>Your {resource.label.toLowerCase()}</h2><p>{filtered.length} record{filtered.length === 1 ? "" : "s"} · {rows.data?.length ?? 0} total · private to your account</p></div>
         <div className="inline-actions">{resource.key === "notifications" && <button className="secondary" disabled={!online || markingAll || !rows.data?.some((row) => !row.read_at)} onClick={() => void markAsRead()}>Mark all read</button>}
@@ -1987,7 +2109,11 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           {resource.key === "tasks" && <label className="filter-input task-filter"><span className="sr-only">Filter by category</span><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}><option value="all">All categories</option>{Object.keys(areaStyles).map((areaName) => <option key={areaName} value={areaName}>{areaName}</option>)}</select></label>}
           <label className="filter-input"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${resource.label.toLowerCase()}`} /></label></div></div>
       {!filtered.length ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored in your Supabase account."} action={!rows.data?.length && <button className="text-button" disabled={!online} onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
-        : <div className="record-list">{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row} online={online} onEdit={() => { setEditing(row); setDialog(true); }} onDelete={() => setDeleting(row)} onPriorityChange={resource.key === "tasks" ? (priority) => changePriority.mutate({ row, priority }) : undefined} onMarkRead={resource.key === "notifications" && !row.read_at ? () => void markAsRead(row) : undefined} onCheckIn={resource.key === "habits" ? async () => {
+        : <div className="record-list">{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row} online={online}
+          checkins={habitCompletions.data ?? []} checkinBusy={toggleHabitCheckin.isPending}
+          onToggleHabitCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })}
+          onFieldChange={(field, value) => updateInlineField.mutate({ row, field, value })}
+          onEdit={() => { setEditing(row); setDialog(true); }} onDelete={() => setDeleting(row)} onPriorityChange={resource.key === "tasks" ? (priority) => changePriority.mutate({ row, priority }) : undefined} onMarkRead={resource.key === "notifications" && !row.read_at ? () => void markAsRead(row) : undefined} onCheckIn={resource.key === "habits" ? async () => {
           if (!supabase || !online) { onToast("You are offline. The habit check-in was not saved.", true); return; }
           const { error } = await supabase.from("habit_completions").upsert({ user_id: userId, habit_id: row.id, completed_on: today() }, { onConflict: "user_id,habit_id,completed_on" });
           if (error) onToast(`Could not record habit check-in: ${error.message}`, true);
@@ -1999,11 +2125,91 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   </div>;
 }
 
-function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMarkRead, onPriorityChange }: { resource: Resource; row: Row; online: boolean; onEdit: () => void; onDelete: () => void; onCheckIn?: () => void; onMarkRead?: () => void; onPriorityChange?: (priority: string) => void }) {
+function InlineRecordField({ field, value, disabled, onChange }: { field: Field; value: unknown; disabled: boolean; onChange: (value: unknown) => void }) {
+  const [draft, setDraft] = useState(value === null || value === undefined ? "" : String(value));
+  useEffect(() => setDraft(value === null || value === undefined ? "" : String(value)), [value]);
+  if (field.type === "select") return <label className="inline-record-field">
+    <small>{field.label}</small>
+    <select value={String(value ?? "")} disabled={disabled} aria-label={field.label} onChange={(event) => onChange(event.target.value)}>
+      {field.options?.map((option) => <option key={option} value={option}>{option.replaceAll("_", " ")}</option>)}
+    </select>
+  </label>;
+  if (field.type === "checkbox") return <label className="inline-record-field inline-record-checkbox">
+    <small>{field.label}</small>
+    <input type="checkbox" checked={Boolean(value)} disabled={disabled} aria-label={field.label} onChange={(event) => onChange(event.target.checked)} />
+  </label>;
+  const required = field.required || field.name === "current_value";
+  return <label className="inline-record-field">
+    <small>{field.label}</small>
+    <input type="number" min={field.min} step="any" value={draft} required={required} disabled={disabled} aria-label={field.label}
+      onChange={(event) => setDraft(event.target.value)}
+      onBlur={(event) => {
+        if (draft === String(value ?? "")) return;
+        if (!event.currentTarget.checkValidity()) { event.currentTarget.reportValidity(); return; }
+        onChange(draft === "" ? null : Number(draft));
+      }}
+      onKeyDown={(event) => { if (event.key === "Enter") event.currentTarget.blur(); }} />
+  </label>;
+}
+
+function HabitRecordCalendar({ habit, checkins, online, busy, onToggle }: {
+  habit: Row; checkins: Row[]; online: boolean; busy: boolean;
+  onToggle: (habitId: string, date: string, checked: boolean) => void;
+}) {
+  const [open, setOpen] = useState(false);
+  const [month, setMonth] = useState(() => today().slice(0, 7));
+  const anchor = new Date(`${month}-01T12:00:00`);
+  const monthStart = new Date(anchor.getFullYear(), anchor.getMonth(), 1);
+  const gridStart = new Date(monthStart);
+  gridStart.setDate(gridStart.getDate() - ((gridStart.getDay() + 6) % 7));
+  const days = Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
+  const weekdayLabels = Array.from({ length: 7 }, (_, index) => new Date(2024, 0, index + 1).toLocaleDateString(undefined, { weekday: "short" }));
+  const shiftMonth = (amount: number) => setMonth(localDateKey(addMonths(anchor, amount)).slice(0, 7));
+  return <div className="habit-record-calendar">
+    <button className="text-button habit-record-calendar-toggle" aria-expanded={open} onClick={() => setOpen((value) => !value)}>
+      <CalendarDays size={13} /> {open ? "Hide calendar" : "View check-in calendar"}
+    </button>
+    {open && <div className="habit-record-calendar-content">
+      <div className="habit-calendar-heading">
+        <div><h2>{String(habit.name)}</h2><p>Choose a day to view or change this habit’s check-in.</p></div>
+        <div className="habit-calendar-controls">
+          <button className="icon" aria-label="Previous month" onClick={() => shiftMonth(-1)}><ChevronLeft size={14} /></button>
+          <b>{anchor.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</b>
+          <button className="icon" aria-label="Next month" onClick={() => shiftMonth(1)}><ChevronRight size={14} /></button>
+        </div>
+      </div>
+      <div className="habit-calendar-grid" role="group" aria-label={`${String(habit.name)} check-in calendar`}>
+        {weekdayLabels.map((day) => <span className="calendar-weekday" key={day}>{day}</span>)}
+        {days.map((date) => {
+          const dateKey = localDateKey(date);
+          const checked = checkins.some((item) => item.habit_id === habit.id && item.completed_on === dateKey);
+          return <button key={dateKey}
+            className={`habit-calendar-day habit-record-calendar-day ${date.getMonth() !== anchor.getMonth() ? "outside-month" : ""} ${dateKey === today() ? "today-cell" : ""} ${checked ? "checked-day" : ""}`}
+            disabled={!online || busy || !habit.is_active || dateKey > today()}
+            onClick={() => {
+              if (date.getMonth() !== anchor.getMonth()) setMonth(dateKey.slice(0, 7));
+              onToggle(String(habit.id), dateKey, checked);
+            }}
+            aria-pressed={checked}
+            aria-label={`${date.toLocaleDateString()}, ${checked ? "checked in" : "not checked in"}`}>
+            <span>{date.getDate()}</span>{checked && <small>Done</small>}
+          </button>;
+        })}
+      </div>
+    </div>}
+  </div>;
+}
+
+function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMarkRead, onPriorityChange, onFieldChange, checkins = [], checkinBusy = false, onToggleHabitCheckin }: {
+  resource: Resource; row: Row; online: boolean; onEdit: () => void; onDelete: () => void; onCheckIn?: () => void;
+  onMarkRead?: () => void; onPriorityChange?: (priority: string) => void;
+  onFieldChange: (field: Field, value: unknown) => void; checkins?: Row[]; checkinBusy?: boolean;
+  onToggleHabitCheckin?: (habitId: string, date: string, checked: boolean) => void;
+}) {
   const [expanded, setExpanded] = useState(false);
   const detailFields = resource.fields.filter((field) => ![resource.display, "icon", "color", "priority", "area"].includes(field.name) && row[field.name] !== null && row[field.name] !== undefined && row[field.name] !== "");
-  const checkins = useRows("habit_completions", String(row.user_id), resource.key === "habits");
-  const checkedToday = resource.key === "habits" && (checkins.data ?? []).some((item) => item.habit_id === row.id && item.completed_on === today());
+  const inlineFields = resource.fields.filter((field) => ["select", "number", "checkbox"].includes(field.type ?? "") && field.name !== "priority");
+  const checkedToday = resource.key === "habits" && checkins.some((item) => item.habit_id === row.id && item.completed_on === today());
   const HabitIcon = habitIcons[String(row.icon)] ?? Flame;
   const area = typeof row.area === "string" ? areaStyles[row.area] : undefined;
   const AreaIcon = area?.icon;
@@ -2017,6 +2223,8 @@ function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMark
       <div className="record-details">{(expanded ? detailFields : detailFields.slice(0, 4)).map((field) => <span key={field.name}><small>{field.label}</small>{displayValue(row[field.name])}</span>)}
         <small className="record-created">{row.updated_at && row.updated_at !== row.created_at ? `Updated ${configuredDate(String(row.updated_at))}` : row.created_at ? `Added ${configuredDate(String(row.created_at))}` : ""}</small></div>
       {detailFields.length > 4 && <button className="text-button record-expand" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? "Show less" : `View all ${detailFields.length} details`}<ChevronDown className={expanded ? "record-expand-icon is-expanded" : "record-expand-icon"} size={13} /></button>}
+      {inlineFields.length > 0 && <div className="record-inline-fields">{inlineFields.map((field) => <InlineRecordField key={field.name} field={field} value={row[field.name]} disabled={!online} onChange={(value) => onFieldChange(field, value)} />)}</div>}
+      {resource.key === "habits" && onToggleHabitCheckin && <HabitRecordCalendar habit={row} checkins={checkins} online={online} busy={checkinBusy} onToggle={onToggleHabitCheckin} />}
     </div><div className="record-actions">{onCheckIn && <button className={`secondary check-in ${checkedToday ? "checked-in" : ""}`} disabled={checkedToday || !online} onClick={onCheckIn}>{checkedToday ? "Done today" : "Check in"}</button>}
       {resource.key === "tasks" && onPriorityChange && <select className={`priority-select priority-${String(row.priority ?? "medium")}`} value={String(row.priority ?? "medium")} aria-label={`Set priority for ${String(row.title)}`} disabled={!online} onChange={(event) => onPriorityChange(event.target.value)}>{taskPriorities.map((priority) => <option key={priority} value={priority}>{priority[0].toUpperCase() + priority.slice(1)}</option>)}</select>}
       {onMarkRead && <button className="secondary check-in" disabled={!online} onClick={onMarkRead}>Mark read</button>}
@@ -2027,11 +2235,13 @@ function RecordCard({ resource, row, online, onEdit, onDelete, onCheckIn, onMark
 
 function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void }) {
   const defaults = useMemo(() => Object.fromEntries(resource.fields.map((field) => [field.name, defaultValue(field, initial?.[field.name])])), [initial, resource]);
-  const { register, handleSubmit, reset, setError, formState: { errors } } = useForm<Record<string, unknown>>({ defaultValues: defaults });
+  const { register, handleSubmit, reset, setError, watch, formState: { errors } } = useForm<Record<string, unknown>>({ defaultValues: defaults });
   useEffect(() => reset(defaults), [defaults, reset]);
   const schema = useMemo(() => validateSchema(resource.fields), [resource.fields]);
   const requiredFields = resource.fields.filter((field) => field.required);
   const optionalFields = resource.fields.filter((field) => !field.required);
+  const transactionType = watch("type");
+  const showBorrowingFields = resource.key === "transactions" && !initial && transactionType === "expense";
   const renderField = (field: Field) => <label key={field.name} className={`form-field ${field.type === "textarea" ? "field-wide" : ""}`}>
     <span>{field.label}{field.required && <i> *</i>}</span>
     {field.type === "relation" ? <RelationInput field={field} userId={userId} register={register(field.name, { required: field.required })} />
@@ -2059,9 +2269,14 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave }: { 
       <form onSubmit={(event) => void handleSubmit(submit)(event)} noValidate>
         <p className="record-form-hint">{initial ? "Update the fields you need. Optional details are grouped below." : "Start with the required details. You can add more information whenever you need."}</p>
         <div className="form-grid">{requiredFields.map(renderField)}</div>
-        {optionalFields.length > 0 && <details className="advanced-fields" open={Boolean(initial)}>
-          <summary>Additional details <span>{optionalFields.length} optional</span></summary>
-          <div className="form-grid">{optionalFields.map(renderField)}</div>
+        {(optionalFields.length > 0 || showBorrowingFields) && <details className="advanced-fields" open={Boolean(initial) || showBorrowingFields}>
+          <summary>Additional details <span>{optionalFields.length + (showBorrowingFields ? 2 : 0)} optional</span></summary>
+          <div className="form-grid">{optionalFields.map(renderField)}
+            {showBorrowingFields && <>
+              <label className="form-field"><span>Borrowed from</span><input type="text" placeholder="Person’s name" {...register("borrowed_from")} /></label>
+              <label className="form-field"><span>Borrowed amount</span><input type="number" min="0.01" step="any" placeholder="Amount of this expense borrowed" {...register("borrowed_amount", { valueAsNumber: true })} /></label>
+            </>}
+          </div>
         </details>}
         <div className="modal-actions"><button type="button" className="secondary" onClick={onClose} disabled={saving}>Cancel</button><button className="primary" type="submit" disabled={saving}>{saving ? "Saving…" : initial ? "Save changes" : `Save ${resource.label.replace(/s$/, "").toLowerCase()}`}</button></div>
       </form>
