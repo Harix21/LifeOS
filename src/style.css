@@ -476,7 +476,7 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
 .auth-card{color:var(--text)}
 .auth-card{width:min(440px,100%);padding:27px;background:var(--panel);border:1px solid var(--line);border-radius:15px;box-shadow:0 15px 50px #07122a16}
 .auth-brand{justify-content:center;padding:0 0 20px;color:var(--text)}
-.auth-logo{display:block;width:min(250px,80%);height:auto;object-fit:contain}
+.auth-logo{display:block;width:min(250px,80%);height:auto;border-radius:10px;object-fit:contain}
 .auth-card h1{font-size:24px;letter-spacing:-.7px;margin:7px 0 10px}
 .auth-card>p:not(.eyebrow){color:var(--muted);font-size:11px;line-height:1.6}
 .auth-card form{display:grid;gap:13px;margin-top:16px}
