@@ -648,36 +648,61 @@ function DemoSettingsPage({ onExitDemo }: { onExitDemo: () => void }) {
   </div>;
 }
 
+type PublicFeature = {
+  key: string;
+  target: string;
+  title: string;
+  eyebrow: string;
+  detail: string;
+  icon: LucideIcon;
+  points: string[];
+};
+
+const publicFeatures: PublicFeature[] = [
+  { key: "today", target: "today", title: "Today and Tomorrow", eyebrow: "DAILY FOCUS", detail: "See the next right actions without jumping between separate apps.", icon: CalendarDays, points: ["Tasks, habits, events, health, and money in one timeline", "Clear priorities for today and tomorrow", "Quick add actions when an idea arrives"] },
+  { key: "tasks", target: "tasks", title: "Tasks and goals", eyebrow: "GET THINGS DONE", detail: "Turn intentions into organized work with due dates, priorities, and progress.", icon: Check, points: ["Track open, completed, and overdue work", "Group tasks around meaningful goals", "Stay focused with a calm, searchable workspace"] },
+  { key: "habits", target: "habits", title: "Habits and routines", eyebrow: "BUILD CONSISTENCY", detail: "Make small actions visible and keep your streaks grounded in real life.", icon: Flame, points: ["Create repeating habits with reminders", "Check in from each habit's own calendar", "Review consistency over time"] },
+  { key: "calendar", target: "calendar", title: "Calendar and events", eyebrow: "SEE YOUR TIME", detail: "Keep appointments, deadlines, and recurring plans in one reliable calendar.", icon: CalendarDays, points: ["Create events with dates and reminders", "Review your week at a glance", "Connect calendar context to daily planning"] },
+  { key: "money", target: "finance_dashboard", title: "Money dashboard", eyebrow: "FINANCIAL CLARITY", detail: "Understand where your money is going and what you are building toward.", icon: Wallet, points: ["See account balances from real transactions", "Review income, spending, and monthly net", "Keep financial decisions connected to your goals"] },
+  { key: "accounts", target: "accounts", title: "Accounts and transactions", eyebrow: "TRACK EVERY RUPEE", detail: "Record transactions once and let LifeOS keep account balances accurate.", icon: CreditCard, points: ["Income and expense records by account", "Balances derived from transaction history", "Useful categories for reports and reviews"] },
+  { key: "savings", target: "savings_goals", title: "Savings plans", eyebrow: "GROW INTENTIONALLY", detail: "Connect contributions to existing saving plans so every deposit moves the right goal.", icon: Target, points: ["Create goals with target amounts and dates", "Add contributions to the selected existing plan", "See progress reflected immediately"] },
+  { key: "fitness", target: "fitness_dashboard", title: "Fitness and health", eyebrow: "CARE FOR YOUR BODY", detail: "Bring workouts, water, food, and health signals into your daily rhythm.", icon: Dumbbell, points: ["Log workouts and body measurements", "Track water and food entries", "Use reminders to make healthy actions easier"] },
+  { key: "projects", target: "project_dashboard", title: "Projects", eyebrow: "MAKE PROGRESS", detail: "Move professional and personal projects forward with a clear home for every moving part.", icon: BriefcaseBusiness, points: ["Organize projects and milestones", "Keep related tasks together", "Review progress without losing the details"] },
+  { key: "journal", target: "journal_entries", title: "Journal", eyebrow: "REFLECT AND RESET", detail: "Capture thoughts, decisions, and daily context in a private journal.", icon: BookOpen, points: ["Write daily entries with your own tone", "Review reflections alongside your routines", "Keep your personal record organized and private"] },
+  { key: "notifications", target: "notifications", title: "Smart notifications", eyebrow: "REMEMBER FOR YOU", detail: "Get timely reminders for habits, water, food, expenses, tasks, and events.", icon: Bell, points: ["Android reminders for recurring routines", "Overdue and upcoming task notifications", "A notification center for anything that needs attention"] },
+  { key: "settings", target: "settings", title: "Settings and security", eyebrow: "MAKE IT YOURS", detail: "Control preferences, appearance, account security, exports, and integrations.", icon: Settings, points: ["Light and dark theme options", "Google sign-in, email verification, and password reset", "Notification, currency, and profile preferences"] },
+];
+
 function PublicSite({ onLogin, onDemo, authError, setup = false }: { onLogin: () => void; onDemo: () => void; authError?: string; setup?: boolean }) {
-  const [view, setView] = useState<"home" | "auth" | "tutorial" | "contact">(setup ? "home" : "home");
+  const [view, setView] = useState<"home" | "auth" | "tutorial" | "contact" | "feature">(setup ? "home" : "home");
+  const [featureKey, setFeatureKey] = useState(publicFeatures[0].key);
+  const feature = publicFeatures.find((item) => item.key === featureKey) ?? publicFeatures[0];
+  const openFeature = (key: string) => { setFeatureKey(key); setView("feature"); };
   if (view === "auth") return <><button className="public-back" onClick={() => setView("home")}>← Back to LifeOS</button><AuthScreen initialError={authError ?? ""} onDemo={onDemo} /></>;
   return <main className="public-site">
     <header className="public-nav"><button className="public-brand" onClick={() => setView("home")}><img src="/icons/lifeos-mark.png" alt="" /> LifeOS</button>
-      <nav><button onClick={() => setView("tutorial")}>Tutorial</button><button onClick={() => setView("contact")}>Contact</button><button className="secondary" onClick={() => { onLogin(); setView("auth"); }}>Log in</button></nav>
+      <nav><button onClick={() => setView("home")}>Features</button><button onClick={() => setView("tutorial")}>Tutorial</button><button onClick={() => setView("contact")}>Contact</button><button className="secondary" onClick={() => { onLogin(); setView("auth"); }}>Log in</button></nav>
     </header>
-    {view === "tutorial" ? <TutorialPage publicPage onBack={() => setView("home")} /> : view === "contact" ? <ContactPage onBack={() => setView("home")} /> : <section className="landing-hero">
+    {view === "tutorial" ? <TutorialPage publicPage onBack={() => setView("home")} onFeature={openFeature} /> : view === "contact" ? <ContactPage onBack={() => setView("home")} /> : view === "feature" ? <PublicFeaturePage feature={feature} onBack={() => setView("tutorial")} onLogin={() => { onLogin(); setView("auth"); }} /> : <><section className="landing-hero">
       <div className="landing-copy"><p className="eyebrow">ONE CALM PLACE FOR YOUR WHOLE LIFE</p><h1>Make space for what matters.</h1><p>LifeOS brings your plans, habits, health, projects, and money into one thoughtful workspace.</p>
         <div className="landing-actions"><button className="primary" onClick={() => { onLogin(); setView("auth"); }}>Get started <ArrowRight size={15} /></button><button className="secondary" onClick={() => setView("tutorial")}><BookOpenCheck size={15} /> See how it works</button></div>
         <div className="landing-downloads"><span><b>Web app</b><small>Use LifeOS on desktop or mobile browser</small></span><span><b>Android app</b><small>Take your routines with you</small></span></div>
       </div>
-      <div className="landing-preview"><div className="preview-top"><span>LifeOS</span><span>✦ Today</span></div><div className="preview-card preview-main"><small>YOUR DAY, CLEARLY</small><h2>A little more intention.</h2><div className="preview-stat"><b>4</b><span>open tasks</span><b>₹12,450</b><span>monthly net</span></div></div><div className="preview-row"><div className="preview-card"><small>HABITS</small><b>3 check-ins today</b></div><div className="preview-card"><small>SAVINGS</small><b>72% toward goal</b></div></div></div>
-    </section>}
+      <div className="landing-preview"><div className="preview-top"><span>LifeOS</span><span>Today</span></div><div className="preview-card preview-main"><small>YOUR DAY, CLEARLY</small><h2>A little more intention.</h2><div className="preview-stat"><b>4</b><span>open tasks</span><b>₹12,450</b><span>monthly net</span></div></div><div className="preview-row"><div className="preview-card"><small>HABITS</small><b>3 check-ins today</b></div><div className="preview-card"><small>SAVINGS</small><b>72% toward goal</b></div></div></div>
+    </section><section className="landing-features"><div className="section-heading"><p className="eyebrow">ONE WORKSPACE, TWELVE WAYS TO HELP</p><h2>Everything has a place.</h2><p>Explore each part of LifeOS before you create your account.</p></div><div className="feature-card-grid">{publicFeatures.map((item) => <button className="feature-card" key={item.key} onClick={() => openFeature(item.key)}><item.icon size={20} /><span>{item.title}</span><small>{item.detail}</small><ArrowRight size={14} /></button>)}</div></section><section className="landing-cta"><p className="eyebrow">READY WHEN YOU ARE</p><h2>Start with one clear day.</h2><button className="primary" onClick={() => { onLogin(); setView("auth"); }}>Create your LifeOS <ArrowRight size={15} /></button></section></>}
     <footer className="public-footer"><span>© {new Date().getFullYear()} LifeOS</span><button onClick={() => setView("tutorial")}>Complete tutorial</button><button onClick={() => setView("contact")}><Mail size={13} /> Contact</button></footer>
   </main>;
 }
 
-function TutorialPage({ publicPage = false, onBack }: { publicPage?: boolean; onBack?: () => void }) {
-  const steps = [
-    ["01", "Start with your day", "Use Today & Tomorrow to see tasks, habits, events, health logs, and money in one focused view."],
-    ["02", "Plan what matters", "Create tasks, goals, projects, and calendar events. Add dates and recurrence when something repeats."],
-    ["03", "Build better routines", "Create habits with reminders, check in from each habit’s calendar, and review your consistency."],
-    ["04", "Understand your money", "Add accounts and transactions, then connect savings contributions to an existing savings goal."],
-    ["05", "Make it yours", "Use Settings for theme, preferences, notifications, exports, and account security."],
-  ];
-  return <main className={`tutorial-page ${publicPage ? "tutorial-public" : "page"}`}><div className="title"><div><p className="eyebrow">LIFEOS GUIDE</p><h1>Everything in one clear rhythm.</h1><p>A practical tour of LifeOS, from your first sign-in to your everyday review.</p></div>{onBack && <button className="secondary" onClick={onBack}>Back to home</button>}</div>
-    <div className="tutorial-grid">{steps.map(([number, title, detail]) => <article className="tutorial-step" key={number}><span>{number}</span><div><h2>{title}</h2><p>{detail}</p></div></article>)}</div>
-    <section className="panel tutorial-tip"><BookOpenCheck size={20} /><div><h2>Start small</h2><p>Add one task, one habit, and one financial account first. LifeOS becomes more useful as your real routines grow.</p></div></section>
+function TutorialPage({ publicPage = false, onBack, onNavigate, onFeature }: { publicPage?: boolean; onBack?: () => void; onNavigate?: (target: string) => void; onFeature?: (key: string) => void }) {
+  return <main className={`tutorial-page ${publicPage ? "tutorial-public" : "page"}`}><div className="title"><div><p className="eyebrow">LIFEOS GUIDE</p><h1>Everything in one clear rhythm.</h1><p>Choose a step to open the feature it explains. You can skip this guide and return from Tutorial in the navigation.</p></div><div className="tutorial-actions">{onBack && <button className="secondary" onClick={onBack}>Back to home</button>}{onNavigate && <button className="secondary" onClick={() => onNavigate("overview")}>Skip tutorial</button>}</div></div>
+    <div className="tutorial-grid">{publicFeatures.map((item, index) => <button className="tutorial-step" key={item.key} onClick={() => onFeature ? onFeature(item.key) : onNavigate?.(item.target)}><span>{String(index + 1).padStart(2, "0")}</span><item.icon size={18} /><div><h2>{item.title}</h2><p>{item.detail}</p></div><ArrowRight size={15} /></button>)}</div>
+    <section className="panel tutorial-tip"><BookOpenCheck size={20} /><div><h2>Start small</h2><p>Open any step to begin. Nothing changes until you choose to add or edit your own records.</p></div></section>
   </main>;
+}
+
+function PublicFeaturePage({ feature, onBack, onLogin }: { feature: PublicFeature; onBack: () => void; onLogin: () => void }) {
+  return <main className="feature-page"><button className="secondary" onClick={onBack}>← Back to tutorial</button><div className="feature-hero"><div><p className="eyebrow">{feature.eyebrow}</p><h1>{feature.title}</h1><p>{feature.detail}</p><button className="primary" onClick={onLogin}>Explore in LifeOS <ArrowRight size={15} /></button></div><div className="feature-icon"><feature.icon size={56} /></div></div><div className="feature-points">{feature.points.map((point) => <div key={point}><Check size={17} /><span>{point}</span></div>)}</div></main>;
 }
 
 function ContactPage({ onBack }: { onBack: () => void }) {
@@ -1014,7 +1039,7 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
           : pageKey === "today" ? <TodayPage userId={user.id} currencyCode={String(preferenceQuery.data?.currency ?? "INR")} onNavigate={navigateTo} onQuickAdd={requestQuickAdd} />
             : pageKey === "finance_dashboard" ? <FinanceDashboard userId={user.id} currencyCode={String(preferenceQuery.data?.currency ?? "INR")} onNavigate={navigateTo} />
               : pageKey === "reports" ? <Reports userId={user.id} currencyCode={String(preferenceQuery.data?.currency ?? "INR")} />
-                : pageKey === "tutorial" ? <TutorialPage />
+                : pageKey === "tutorial" ? <TutorialPage onNavigate={navigateTo} />
                 : pageKey === "calendar" ? <CalendarPage userId={user.id} onToast={notify} online={canWrite} weekStartsOn={Number(preferenceQuery.data?.week_starts_on ?? 1)} openRequest={quickAddTarget === "calendar_events" ? quickAddRequest : 0} onQuickAddConsumed={() => setQuickAddTarget("")} />
                 : pageKey === "settings" ? isDemoSession(session)
                   ? <DemoSettingsPage onExitDemo={() => void signOut()} />
