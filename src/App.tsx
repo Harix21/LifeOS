@@ -736,6 +736,8 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   const demoMode = isDemoSession(session);
   const canWrite = !demoMode;
   const [deviceNotificationsEnabled, setDeviceNotificationsEnabled] = useState(false);
+  const appNotifications = useRows("notifications", user.id, !demoMode);
+  const unreadNotificationCount = (appNotifications.data ?? []).filter((row) => !row.read_at).length;
   const profileQuery = useQuery({
     queryKey: ["profile", user.id],
     queryFn: async () => {
@@ -771,6 +773,9 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   const reminderBills = useRows("recurring_transactions", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
   const reminderHabits = useRows("habits", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
   const reminderNotifications = useRows("notifications", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+  const reminderWater = useRows("water_entries", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+  const reminderNutrition = useRows("nutrition_entries", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
+  const reminderTransactions = useRows("transactions", user.id, !demoMode && Capacitor.isNativePlatform() && deviceNotificationsEnabled);
 
   useEffect(() => {
     const preferenceKey = `lifeos-device-notifications-enabled:${user.id}`;
@@ -785,6 +790,22 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   }, [user.id]);
 
   useEffect(() => {
+    if (demoMode || !Capacitor.isNativePlatform()) return;
+    const preferenceKey = `lifeos-device-notifications-enabled:${user.id}`;
+    if (localStorage.getItem(preferenceKey) !== null) return;
+    let active = true;
+    void requestDeviceNotificationPermission().then((granted) => {
+      if (!active || !granted) return;
+      localStorage.setItem(preferenceKey, "true");
+      setDeviceNotificationsEnabled(true);
+      window.dispatchEvent(new CustomEvent("lifeos-device-notifications-changed", { detail: { userId: user.id } }));
+    }).catch((error) => {
+      if (active) setNotificationError(error instanceof Error ? error.message : "Could not enable device notifications.");
+    });
+    return () => { active = false; };
+  }, [demoMode, user.id]);
+
+  useEffect(() => {
     let active = true;
     const synchronizeReminders = async () => {
       if (demoMode || !Capacitor.isNativePlatform()) return;
@@ -794,7 +815,7 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
           if (active) setNotificationError("");
           return;
         }
-        if ([reminderTasks, reminderEvents, reminderBills, reminderHabits, reminderNotifications]
+        if ([reminderTasks, reminderEvents, reminderBills, reminderHabits, reminderNotifications, reminderWater, reminderNutrition, reminderTransactions]
           .some((query) => query.isLoading || (query.isError && !query.data))) return;
         await scheduleDeviceReminders(user.id, {
           tasks: reminderTasks.data ?? [],
@@ -802,6 +823,9 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
           recurringTransactions: reminderBills.data ?? [],
           habits: reminderHabits.data ?? [],
           notifications: reminderNotifications.data ?? [],
+          waterEntries: reminderWater.data ?? [],
+          nutritionEntries: reminderNutrition.data ?? [],
+          transactions: reminderTransactions.data ?? [],
         });
         if (active) setNotificationError("");
       } catch (error) {
@@ -810,7 +834,7 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
     };
     void synchronizeReminders();
     return () => { active = false; };
-  }, [demoMode, deviceNotificationsEnabled, reminderBills.data, reminderBills.isLoading, reminderEvents.data, reminderEvents.isLoading, reminderHabits.data, reminderHabits.isLoading, reminderNotifications.data, reminderNotifications.isLoading, reminderTasks.data, reminderTasks.isLoading, user.id]);
+  }, [demoMode, deviceNotificationsEnabled, reminderBills.data, reminderBills.isLoading, reminderEvents.data, reminderEvents.isLoading, reminderHabits.data, reminderHabits.isLoading, reminderNotifications.data, reminderNotifications.isLoading, reminderNutrition.data, reminderNutrition.isLoading, reminderTasks.data, reminderTasks.isLoading, reminderTransactions.data, reminderTransactions.isLoading, reminderWater.data, reminderWater.isLoading, user.id]);
 
   useEffect(() => {
     const onlineHandler = () => setOnline(true);
@@ -842,20 +866,6 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
       } catch (error) {
         failed = error instanceof Error ? error.message : "Could not sync changes.";
         if (active) setSyncError(failed);
-      }
-      try {
-        const tables = [...new Set(resources.map((resource) => resource.table))];
-        const additionalTables = ["notification_preferences", "telegram_connections"];
-        for (const table of [...tables, ...additionalTables]) await loadRows(table, user.id);
-        await Promise.all([loadSingleRow("profiles", user.id), loadSingleRow("user_preferences", user.id)]);
-        await queryClient.invalidateQueries({ queryKey: ["rows", user.id] });
-        await queryClient.invalidateQueries({ queryKey: ["profile", user.id] });
-        await queryClient.invalidateQueries({ queryKey: ["preferences", user.id] });
-      } catch (error) {
-        if (navigator.onLine && active && !failed) {
-          failed = error instanceof Error ? error.message : "Could not download LifeOS data for offline use.";
-          setSyncError(failed);
-        }
       } finally {
         syncing = false;
         await refreshPending();
@@ -864,15 +874,22 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
     }
     void refreshPending();
     void synchronize();
-    const unsubscribe = subscribeToLocalChanges(user.id, () => { void refreshPending(); });
+    const unsubscribe = subscribeToLocalChanges(user.id, () => {
+      void refreshPending();
+      if (navigator.onLine) void synchronize();
+    });
     const resumeHandler = () => { if (navigator.onLine) void synchronize(); };
     window.addEventListener("online", resumeHandler);
     document.addEventListener("visibilitychange", resumeHandler);
+    window.addEventListener("focus", resumeHandler);
+    const retryTimer = window.setInterval(() => { if (navigator.onLine) void synchronize(); }, 5000);
     return () => {
       active = false;
       unsubscribe();
       window.removeEventListener("online", resumeHandler);
       document.removeEventListener("visibilitychange", resumeHandler);
+      window.removeEventListener("focus", resumeHandler);
+      window.clearInterval(retryTimer);
     };
   }, [demoMode, online, queryClient, user.id]);
   useEffect(() => { setActiveSearchIndex(0); }, [search, searchCategory]);
@@ -1058,7 +1075,7 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
             </div>}
           </div>
           <button className="icon" aria-label={`Switch to ${displayTheme === "dark" ? "light" : "dark"} theme`} onClick={() => setThemeAndSave(displayTheme === "dark" ? "light" : "dark")}>{displayTheme === "dark" ? <Sun /> : <Moon />}</button>
-          <button className="icon notification-button" aria-label="Open notifications" onClick={() => navigateTo("notifications")}><Bell /></button>
+          <button className="icon notification-button" aria-label={`Open notifications${unreadNotificationCount ? `, ${unreadNotificationCount} unread` : ""}`} onClick={() => navigateTo("notifications")}><Bell />{unreadNotificationCount > 0 && <span className="notification-badge">{unreadNotificationCount > 99 ? "99+" : unreadNotificationCount}</span>}</button>
           <button className="primary quick-add" disabled={!canWrite} onClick={quickAdd}><Plus size={16} /> Quick add</button>
         </div>
       </header>

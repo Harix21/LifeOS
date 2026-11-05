@@ -38,6 +38,9 @@ function remindersFromRows(
   recurringTransactions: Row[],
   habits: Row[],
   notifications: Row[],
+  waterEntries: Row[],
+  nutritionEntries: Row[],
+  transactions: Row[],
 ) {
   const reminders: Reminder[] = [];
   const now = new Date();
@@ -71,6 +74,32 @@ function remindersFromRows(
       const next = addRecurringInterval(occurrence, recurrence);
       if (next.getTime() <= occurrence.getTime()) break;
       occurrence = next;
+    }
+    if (new Date(due).getTime() < Date.now() && recurrence === "none") {
+      add(`overdue-task:${task.id}:${new Date().toISOString().slice(0, 10)}`, task.title, "This task is overdue. Complete it or reschedule it.", new Date(Date.now() + 60_000));
+    }
+  }
+
+  for (let dayOffset = 0; dayOffset < 7; dayOffset += 1) {
+    const date = new Date(now);
+    date.setHours(12, 0, 0, 0);
+    date.setDate(date.getDate() + dayOffset);
+    const dateKey = `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}-${String(date.getDate()).padStart(2, "0")}`;
+    const hasWater = dayOffset === 0 && waterEntries.some((entry) => String(entry.consumed_at ?? "").slice(0, 10) === dateKey);
+    const hasFood = dayOffset === 0 && nutritionEntries.some((entry) => String(entry.consumed_at ?? "").slice(0, 10) === dateKey);
+    const hasExpense = dayOffset === 0 && transactions.some((entry) => String(entry.transaction_date ?? "").slice(0, 10) === dateKey);
+    if (!hasWater) {
+      for (const time of ["09:00", "13:00", "17:00", "21:00"]) {
+        add(`water:${dateKey}:${time}`, "Drink water", "Log your water intake in LifeOS.", atLocalTime(dateKey, time));
+      }
+    }
+    if (!hasFood) {
+      for (const time of ["12:30", "19:30"]) {
+        add(`food:${dateKey}:${time}`, "Add your food", "Record what you ate today.", atLocalTime(dateKey, time));
+      }
+    }
+    if (!hasExpense) {
+      add(`expense:${dateKey}`, "Track expenses", "Record today's spending in LifeOS.", atLocalTime(dateKey, "20:30"));
     }
   }
 
@@ -161,11 +190,11 @@ export async function requestDeviceNotificationPermission() {
 
 export async function scheduleDeviceReminders(
   userId: string,
-  data: { tasks: Row[]; events: Row[]; recurringTransactions: Row[]; habits: Row[]; notifications: Row[] },
+  data: { tasks: Row[]; events: Row[]; recurringTransactions: Row[]; habits: Row[]; notifications: Row[]; waterEntries: Row[]; nutritionEntries: Row[]; transactions: Row[] },
 ) {
   const oldIds = JSON.parse(localStorage.getItem(scheduledIdsKey(userId)) ?? "[]") as number[];
   if (oldIds.length) await LocalNotifications.cancel({ notifications: oldIds.map((id) => ({ id })) });
-  const reminders = remindersFromRows(data.tasks, data.events, data.recurringTransactions, data.habits, data.notifications);
+  const reminders = remindersFromRows(data.tasks, data.events, data.recurringTransactions, data.habits, data.notifications, data.waterEntries, data.nutritionEntries, data.transactions);
   if (!reminders.length) {
     localStorage.removeItem(scheduledIdsKey(userId));
     return 0;
