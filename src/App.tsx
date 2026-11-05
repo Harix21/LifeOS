@@ -2102,12 +2102,14 @@ function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] })
   </div>;
 }
 
-function HabitInsights({ habits, completions, loading, busy, onToggleCheckin }: {
+function HabitInsights({ habits, completions, loading, busy, onToggleCheckin, selectedHabitId, onSelectHabit }: {
   habits: Row[];
   completions: Row[];
   loading: boolean;
   busy: boolean;
   onToggleCheckin: (habitId: string, date: string, checked: boolean) => void;
+  selectedHabitId?: string;
+  onSelectHabit?: (habitId: string | undefined) => void;
 }) {
   const [month, setMonth] = useState(() => today().slice(0, 7));
   const [selectedDate, setSelectedDate] = useState(today);
@@ -2116,16 +2118,16 @@ function HabitInsights({ habits, completions, loading, busy, onToggleCheckin }: 
   const gridStart = new Date(monthStart);
   gridStart.setDate(gridStart.getDate() - ((gridStart.getDay() + 6) % 7));
   const days = Array.from({ length: 42 }, (_, index) => addDays(gridStart, index));
-  const activeHabits = habits.filter((habit) => habit.is_active);
+  const activeHabits = habits.filter((habit) => habit.is_active && (!selectedHabitId || habit.id === selectedHabitId));
   const completionCounts = useMemo(() => {
     const counts = new Map<string, number>();
-    for (const completion of completions) {
+    for (const completion of completions.filter((item) => !selectedHabitId || item.habit_id === selectedHabitId)) {
       const date = String(completion.completed_on ?? "");
       counts.set(date, (counts.get(date) ?? 0) + 1);
     }
     return counts;
-  }, [completions]);
-  const selectedCompletions = completions.filter((completion) => completion.completed_on === selectedDate);
+  }, [completions, selectedHabitId]);
+  const selectedCompletions = completions.filter((completion) => completion.completed_on === selectedDate && (!selectedHabitId || completion.habit_id === selectedHabitId));
   const shiftMonth = (amount: number) => {
     const next = new Date(anchor);
     next.setMonth(next.getMonth() + amount);
@@ -2140,8 +2142,9 @@ function HabitInsights({ habits, completions, loading, busy, onToggleCheckin }: 
     </section>
     <section className="panel habit-checkin-calendar">
       <div className="habit-calendar-heading">
-        <div><h2>Habit check-in calendar</h2><p>Select a day to review or record your habits.</p></div>
+        <div><h2>{selectedHabitId ? `${String(activeHabits[0]?.name ?? "Habit")} calendar` : "Habit check-in calendar"}</h2><p>Select a day to review or record your habits.</p></div>
         <div className="habit-calendar-controls">
+          {selectedHabitId && <button className="text-button" onClick={() => onSelectHabit?.(undefined)}>All habits</button>}
           <button className="icon" aria-label="Previous month" onClick={() => shiftMonth(-1)}><ChevronLeft size={14} /></button>
           <b>{anchor.toLocaleDateString(undefined, { month: "long", year: "numeric" })}</b>
           <button className="icon" aria-label="Next month" onClick={() => shiftMonth(1)}><ChevronRight size={14} /></button>
@@ -2181,6 +2184,9 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const rows = useRows(resource.table, userId);
   const habitCompletions = useRows("habit_completions", userId, resource.key === "habits");
   const linkedAccounts = useRows("financial_accounts", userId, resource.key === "payment_cards");
+  const accountTransactions = useRows("transactions", userId, resource.key === "financial_accounts");
+  const savingsGoals = useRows("savings_goals", userId, resource.key === "savings_contributions" || resource.key === "savings_goals");
+  const savingsContributions = useRows("savings_contributions", userId, resource.key === "savings_contributions" || resource.key === "savings_goals");
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
@@ -2192,6 +2198,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const [statusFilter, setStatusFilter] = useState("all");
   const [areaFilter, setAreaFilter] = useState("all");
   const [sortMode, setSortMode] = useState("recent");
+  const [selectedHabitId, setSelectedHabitId] = useState<string>();
   const [markingAll, setMarkingAll] = useState(false);
   useEffect(() => {
     if (openRequest > 0) {
@@ -2202,7 +2209,6 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   }, [onQuickAddConsumed, openRequest]);
   const save = useMutation({
     mutationFn: async (values: Record<string, unknown>) => {
-      if (!supabase) throw new Error("Supabase is not configured.");
       const payload = cleanFormValues(values, fieldsForRecord(resource, Boolean(editing)));
       if (resource.key === "tasks" && payload.status === "done") payload.completed_at = editing?.completed_at ?? new Date().toISOString();
       else if (resource.key === "tasks" && payload.status && payload.status !== "done") payload.completed_at = null;
@@ -2256,13 +2262,23 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       }
       const isSingleton = resource.table === "fitness_profiles";
       const recordId = isSingleton ? userId : editing?.id ?? crypto.randomUUID();
-      return saveQueuedRow(userId, resource.table, {
+      const result = await saveQueuedRow(userId, resource.table, {
         ...payload,
         ...(!isSingleton ? { id: recordId } : {}),
       }, { onConflict: isSingleton ? "user_id" : "id", cacheId: recordId });
+      if (resource.key === "savings_contributions" && payload.savings_goal_id) {
+        const goalId = String(payload.savings_goal_id);
+        const total = (savingsContributions.data ?? [])
+          .filter((contribution) => contribution.id !== editing?.id && contribution.savings_goal_id === goalId)
+          .reduce((sum, contribution) => sum + Number(contribution.amount ?? 0), 0) + Number(payload.amount ?? 0);
+        const goal = (savingsGoals.data ?? []).find((item) => item.id === goalId);
+        if (goal) await saveQueuedRow(userId, "savings_goals", { id: goalId, current_amount: total });
+      }
+      return result;
     },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
+      if (resource.key === "savings_contributions") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "savings_goals"] });
       if (resource.key === "transactions" || resource.key === "nutrition_entries") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "loans"] });
       setDialog(false); setEditing(null); onToast(savedLocallyMessage(resource.label, result));
     },
@@ -2270,10 +2286,21 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   });
   const remove = useMutation({
     mutationFn: async (row: Row) => {
-      return deleteQueuedRow(userId, resource.table, row.id);
+      const result = await deleteQueuedRow(userId, resource.table, row.id);
+      if (resource.key === "savings_contributions" && row.savings_goal_id) {
+        const goalId = String(row.savings_goal_id);
+        const total = (savingsContributions.data ?? [])
+          .filter((contribution) => contribution.id !== row.id && contribution.savings_goal_id === goalId)
+          .reduce((sum, contribution) => sum + Number(contribution.amount ?? 0), 0);
+        if ((savingsGoals.data ?? []).some((goal) => goal.id === goalId)) {
+          await saveQueuedRow(userId, "savings_goals", { id: goalId, current_amount: total });
+        }
+      }
+      return result;
     },
     onSuccess: async (result) => {
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
+      if (resource.key === "savings_contributions") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "savings_goals"] });
       if (resource.key === "habits") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "habit_completions"] });
       setDeleting(null); setDialog(false); setEditing(null); onToast(savedLocallyMessage(`${resource.label} deleted`, result));
     },
@@ -2351,6 +2378,17 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     .filter((transaction) => linkedTransactionIds.has(transaction.id))
     .sort((a, b) => String(b.transaction_date ?? "").localeCompare(String(a.transaction_date ?? "")));
   const visibleRecordCount = resource.key === "loans" ? filteredLoanGroups.length : filtered.length;
+  const accountBalances = useMemo(() => {
+    const balances = new Map<string, number>();
+    for (const account of rows.data ?? []) balances.set(String(account.id), Number(account.opening_balance ?? 0));
+    for (const transaction of accountTransactions.data ?? []) {
+      if (!transaction.account_id) continue;
+      const id = String(transaction.account_id);
+      const amount = Number(transaction.account_paid_amount ?? transaction.amount ?? 0);
+      balances.set(id, (balances.get(id) ?? 0) + (transaction.type === "income" ? amount : -amount));
+    }
+    return balances;
+  }, [accountTransactions.data, rows.data]);
   async function markAsRead(row?: Row) {
     setMarkingAll(true);
     try {
@@ -2373,7 +2411,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       <button className="primary" onClick={() => { setEditing(null); setDialog(true); }}><Plus size={16} /> Add {resource.label.replace(/s$/, "").toLowerCase()}</button></div>
     {rows.error && <ErrorState error={rows.error} onRetry={() => void rows.refetch()} />}
     {resource.key === "tasks" && <TaskInsights rows={rows.data ?? []} />}
-    {resource.key === "habits" ? <>{habitCompletions.error && <ErrorState error={habitCompletions.error} onRetry={() => void habitCompletions.refetch()} />}<HabitInsights habits={rows.data ?? []} completions={habitCompletions.data ?? []} loading={habitCompletions.isLoading} busy={toggleHabitCheckin.isPending} onToggleCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })} /></>
+    {resource.key === "habits" ? <>{habitCompletions.error && <ErrorState error={habitCompletions.error} onRetry={() => void habitCompletions.refetch()} />}<HabitInsights habits={rows.data ?? []} completions={habitCompletions.data ?? []} loading={habitCompletions.isLoading} busy={toggleHabitCheckin.isPending} selectedHabitId={selectedHabitId} onSelectHabit={setSelectedHabitId} onToggleCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })} /></>
       : resource.key === "nutrition_entries" ? <NutritionInsights rows={rows.data ?? []} />
         : resource.key !== "tasks" && !["personal_documents", "payment_cards"].includes(resource.key) && <RecordInsights resource={resource} rows={rows.data ?? []} />}
     {rows.isLoading ? <LoadingState /> : <section className="panel records-panel">
@@ -2396,6 +2434,8 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           linkedAccountName={(linkedAccounts.data ?? []).find((account) => account.id === row.account_id)?.name as string | undefined}
           checkins={habitCompletions.data ?? []}
           onFieldChange={(field, value) => updateInlineField.mutate({ row, field, value })}
+          accountBalance={resource.key === "financial_accounts" ? accountBalances.get(String(row.id)) : undefined}
+          onViewHabitCalendar={resource.key === "habits" ? () => setSelectedHabitId(String(row.id)) : undefined}
           onEdit={() => { setEditing(row); setDialog(true); }} onPriorityChange={resource.key === "tasks" ? (priority) => changePriority.mutate({ row, priority }) : undefined} onMarkRead={resource.key === "notifications" && !row.read_at ? () => void markAsRead(row) : undefined} onCheckIn={resource.key === "habits" ? async () => {
           toggleHabitCheckin.mutate({ habitId: row.id, date: today(), checked: false });
         } : undefined} />)}</div>}
@@ -2446,11 +2486,13 @@ function InlineRecordField({ field, value, disabled, onChange, className = "", s
   </label>;
 }
 
-function RecordCard({ resource, row, onEdit, onCheckIn, onMarkRead, onPriorityChange, onFieldChange, checkins = [], linkedAccountName }: {
+function RecordCard({ resource, row, onEdit, onCheckIn, onMarkRead, onPriorityChange, onFieldChange, checkins = [], linkedAccountName, accountBalance, onViewHabitCalendar }: {
   resource: Resource; row: Row; onEdit: () => void; onCheckIn?: () => void;
   onMarkRead?: () => void; onPriorityChange?: (priority: string) => void;
   onFieldChange: (field: Field, value: unknown) => void; checkins?: Row[];
   linkedAccountName?: string;
+  accountBalance?: number;
+  onViewHabitCalendar?: () => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const [revealed, setRevealed] = useState(false);
@@ -2488,12 +2530,14 @@ function RecordCard({ resource, row, onEdit, onCheckIn, onMarkRead, onPriorityCh
         {area && AreaIcon && !["tasks", "goals"].includes(resource.key) && <span className={`category-badge ${area.className}`}><AreaIcon size={12} />{String(row.area)}</span>}
       </div>
       {!["goals", "habits"].includes(resource.key) && <div className="record-details">{(expanded ? detailFields : detailFields.slice(0, 2)).map((field) => <span className={`record-detail-${field.name}`} key={field.name}><small>{field.label}</small>{resource.key === "tasks" && field.name === "due_date" && typeof row.due_date === "string" && !Number.isNaN(new Date(row.due_date).getTime()) ? `${configuredDate(row.due_date)} · ${configuredTime(row.due_date)}` : field.sensitive ? maskedValue(row[field.name]) : displayValue(row[field.name])}</span>)}
+        {resource.key === "financial_accounts" && accountBalance !== undefined && <span className="record-account-balance"><small>Current balance</small>{accountBalance.toFixed(2)} {String(row.currency ?? "")}</span>}
         {resource.key === "transactions" && row.type === "expense" && row.account_paid_amount !== undefined && Number(row.account_paid_amount) > 0
           && <span><small>Paid from account</small>{Number(row.account_paid_amount).toFixed(2)}</span>}
         <small className="record-created">{row.updated_at && row.updated_at !== row.created_at ? `Updated ${configuredDate(String(row.updated_at))}` : row.created_at ? `Added ${configuredDate(String(row.created_at))}` : ""}</small></div>}
       {detailFields.length > 2 && !["goals", "habits"].includes(resource.key) && <button className="text-button record-expand" aria-expanded={expanded} onClick={() => setExpanded((open) => !open)}>{expanded ? "Show less" : `View all ${detailFields.length} details`}<ChevronDown className={expanded ? "record-expand-icon is-expanded" : "record-expand-icon"} size={13} /></button>}</>}
     </div><div className={`record-actions ${["tasks", "goals"].includes(resource.key) ? "record-actions-compact" : ""}`}><div className="record-action-stack">
       {onCheckIn && <button className={`secondary check-in ${checkedToday ? "checked-in" : ""}`} disabled={checkedToday} onClick={onCheckIn}>{checkedToday ? "Done today" : "Check in"}</button>}
+      {onViewHabitCalendar && <button className="secondary check-in" onClick={onViewHabitCalendar}>View calendar</button>}
       {resource.key === "tasks" && onPriorityChange && <select className={`priority-select priority-${String(row.priority ?? "medium")}`} value={String(row.priority ?? "medium")} aria-label={`Set priority for ${String(row.title)}`} onChange={(event) => onPriorityChange(event.target.value)}>{taskPriorities.map((priority) => <option key={priority} value={priority}>{priority[0].toUpperCase() + priority.slice(1)}</option>)}</select>}
       {quickFields.map((field) => <InlineRecordField key={field.name} className={`quick-record-field quick-record-field-${field.name}`} field={field} value={row[field.name]} disabled={false} showLabel={false} onChange={(value) => onFieldChange(field, value)} />)}
       {onMarkRead && <button className="secondary check-in" onClick={onMarkRead}>Mark read</button>}
