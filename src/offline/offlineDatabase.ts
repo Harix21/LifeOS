@@ -20,6 +20,10 @@ type PendingMutation = {
   changes: OfflineRecordChange[];
 };
 
+function requireOnline() {
+  if (!navigator.onLine) throw new Error("You are offline. Reconnect to the internet before making changes.");
+}
+
 class LifeOSOfflineDatabase extends Dexie {
   records!: Table<CachedRecord, [string, string, string]>;
   markers!: Table<TableMarker, [string, string]>;
@@ -108,6 +112,7 @@ export async function enqueueUpsert(
   payload: Record<string, unknown>,
   options: { onConflict?: string; cacheId?: string } = {},
 ) {
+  requireOnline();
   const id = options.cacheId ?? String(payload.id ?? (options.onConflict === "user_id" ? userId : crypto.randomUUID()));
   const serverPayload: Record<string, unknown> = { ...payload, user_id: userId };
   if (!options.onConflict || options.onConflict !== "user_id") serverPayload.id = id;
@@ -147,6 +152,7 @@ export async function enqueueDelete(
   id: string,
   match?: Record<string, string | number | boolean | null>,
 ) {
+  requireOnline();
   const change: OfflineRecordChange = { kind: "delete", table, id, match };
   const mutation: PendingMutation = {
     id: crypto.randomUUID(),
@@ -168,6 +174,7 @@ export async function enqueueRpc(
   args: Record<string, unknown>,
   changes: OfflineRecordChange[],
 ) {
+  requireOnline();
   const mutation: PendingMutation = {
     id: crypto.randomUUID(),
     userId,
@@ -184,6 +191,10 @@ export async function enqueueRpc(
 
 export async function countPendingMutations(userId: string) {
   return database.outbox.where("userId").equals(userId).count();
+}
+
+export async function clearPendingMutations(userId: string) {
+  await database.outbox.where("userId").equals(userId).delete();
 }
 
 export async function syncPendingMutations(client: SupabaseClient, userId: string) {

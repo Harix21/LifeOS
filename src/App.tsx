@@ -28,9 +28,9 @@ import { FinanceWorkspace } from "./components/finance/FinanceWorkspace";
 import { ProjectsWorkspace } from "./components/projects/ProjectsWorkspace";
 import { DEMO_USER_ID, getDemoPreferences, getDemoProfile, getDemoRows } from "./demoData";
 import {
-  cacheServerRows, countPendingMutations, enqueueDelete, enqueueRpc,
+  cacheServerRows, clearPendingMutations, enqueueDelete, enqueueRpc,
   enqueueUpsert, getCachedRows, readCachedSingle, subscribeToLocalChanges,
-  syncAfterLocalWrite, syncPendingMutations,
+  syncAfterLocalWrite,
 } from "./offline/offlineDatabase";
 import type { OfflineRecordChange } from "./offline/offlineDatabase";
 import { cancelDeviceReminders, requestDeviceNotificationPermission, scheduleDeviceReminders } from "./offline/localNotifications";
@@ -492,14 +492,17 @@ async function deleteQueuedRow(userId: string, table: string, id: string) {
 }
 
 async function syncQueuedChanges(userId: string) {
-  if (supabase && navigator.onLine) return syncAfterLocalWrite(supabase, userId);
-  return { synced: 0, remaining: await countPendingMutations(userId), error: null as string | null };
+  if (!supabase || !navigator.onLine) throw new Error("You are offline. Reconnect to the internet before making changes.");
+  const result = await syncAfterLocalWrite(supabase, userId);
+  if (result.error) {
+    await clearPendingMutations(userId);
+    throw new Error(result.error);
+  }
+  return result;
 }
 
-function savedLocallyMessage(label: string, result: { remaining: number; error: string | null }) {
-  if (result.error) return `${label} saved on this device. Sync is pending: ${result.error}`;
-  if (result.remaining) return `${label} saved on this device and will sync when internet returns.`;
-  return `${label} saved.`;
+function savedLocallyMessage(label: string, _result: { remaining?: number; error?: string | null }) {
+  return `${label} saved to Supabase.`;
 }
 
 function groupLoans(rows: Row[]): LoanGroup[] {
@@ -723,8 +726,6 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   const [searchCategory, setSearchCategory] = useState("all");
   const [activeSearchIndex, setActiveSearchIndex] = useState(0);
   const [online, setOnline] = useState(navigator.onLine);
-  const [pendingChanges, setPendingChanges] = useState(0);
-  const [syncError, setSyncError] = useState("");
   const [notificationError, setNotificationError] = useState("");
   const [onboardingChecked, setOnboardingChecked] = useState(false);
   const [showOnboarding, setShowOnboarding] = useState(false);
@@ -845,52 +846,8 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
   }, []);
   useEffect(() => {
     if (demoMode) return;
-    let active = true;
-    let syncing = false;
-    async function refreshPending() {
-      const count = await countPendingMutations(user.id);
-      if (active) setPendingChanges(count);
-    }
-    async function synchronize() {
-      if (!online || syncing || !supabase) return;
-      syncing = true;
-      let failed = "";
-      try {
-        const result = await syncPendingMutations(supabase, user.id);
-        if (result.synced) {
-          setSyncError("");
-          await queryClient.invalidateQueries({ queryKey: ["rows", user.id] });
-          await queryClient.invalidateQueries({ queryKey: ["profile", user.id] });
-          await queryClient.invalidateQueries({ queryKey: ["preferences", user.id] });
-        }
-      } catch (error) {
-        failed = error instanceof Error ? error.message : "Could not sync changes.";
-        if (active) setSyncError(failed);
-      } finally {
-        syncing = false;
-        await refreshPending();
-        if (active && !failed) setSyncError("");
-      }
-    }
-    void refreshPending();
-    void synchronize();
-    const unsubscribe = subscribeToLocalChanges(user.id, () => {
-      void refreshPending();
-      if (navigator.onLine) void synchronize();
-    });
-    const resumeHandler = () => { if (navigator.onLine) void synchronize(); };
-    window.addEventListener("online", resumeHandler);
-    document.addEventListener("visibilitychange", resumeHandler);
-    window.addEventListener("focus", resumeHandler);
-    const retryTimer = window.setInterval(() => { if (navigator.onLine) void synchronize(); }, 5000);
-    return () => {
-      active = false;
-      unsubscribe();
-      window.removeEventListener("online", resumeHandler);
-      document.removeEventListener("visibilitychange", resumeHandler);
-      window.removeEventListener("focus", resumeHandler);
-      window.clearInterval(retryTimer);
-    };
+    void clearPendingMutations(user.id);
+    return undefined;
   }, [demoMode, online, queryClient, user.id]);
   useEffect(() => { setActiveSearchIndex(0); }, [search, searchCategory]);
   useEffect(() => { if (mobileSearchOpen) searchInput.current?.focus(); }, [mobileSearchOpen]);
@@ -952,11 +909,10 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
     if (demoMode) return;
     void enqueueUpsert(user.id, "user_preferences", { theme: next }, { onConflict: "user_id" })
       .then(() => syncQueuedChanges(user.id))
-      .then((result) => {
-        if (result?.error) notify(`Theme saved on this device. Sync is pending: ${result.error}`, true);
+      .then(() => {
         void queryClient.invalidateQueries({ queryKey: ["preferences", user.id] });
       })
-      .catch((error) => notify(`Could not save theme locally: ${error instanceof Error ? error.message : "Unknown storage error."}`, true));
+      .catch((error) => notify(`Could not save theme: ${error instanceof Error ? error.message : "Unknown storage error."}`, true));
   }
   function navigateTo(key: string) {
     navigate(key === "overview" ? "/" : `/module/${key}`);
@@ -1039,9 +995,9 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
         </button>
       </nav>
       <div className="sidebottom">
-        <div className={`status ${!online && !demoMode || syncError || notificationError || pendingChanges ? "offline-status" : ""}`} title={syncError || notificationError || undefined}>
-          ● {demoMode ? "Demo workspace" : syncError || notificationError ? `Needs attention${pendingChanges ? ` · ${pendingChanges} pending` : ""}`
-            : pendingChanges ? `${pendingChanges} changes waiting to sync` : online ? "Synced with Supabase" : "Offline — changes saved on device"}
+        <div className={`status ${!online && !demoMode || notificationError ? "offline-status" : ""}`} title={notificationError || undefined}>
+          ● {demoMode ? "Demo workspace" : notificationError ? "Needs attention"
+            : online ? "Connected to Supabase — changes enabled" : "Offline — changes disabled"}
         </div>
         <button className={`nav ${pageKey === "settings" ? "active" : ""}`} onClick={() => navigateTo("settings")}><Settings size={16} /><span>Settings</span></button>
         <div className="user"><span className="avatar">{(String(profileQuery.data?.display_name || user.email || "U").trim()[0] ?? "U").toUpperCase()}</span>
@@ -3105,7 +3061,7 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
           <button className="secondary" disabled={!deviceNotificationsEnabled} onClick={() => void sendDeviceTestNotification()}>Send device test</button></>}
         <label className="toggle-row"><span><b>Browser notifications</b><small>Allow notifications from this browser</small></span><input type="checkbox" checked={browserEnabled} onChange={(event) => void updateBrowserNotifications(event.target.checked)} /></label>
         <button className="secondary" disabled={!browserEnabled} onClick={sendBrowserTest}>Send browser test</button>
-        <p className="muted">In-app notification history is available in the Notifications module. Android reminders are scheduled from data saved on this device.</p></section>
+        <p className="muted">In-app notification history is available in the Notifications module. Changes require an active internet connection.</p></section>
       <section className="panel"><PanelHeading title="Telegram integration" detail="Only the chat ID is stored in this database; bot tokens stay server-side." />
         <form className="settings-form" onSubmit={(event) => void saveTelegram(event)}><label>Telegram Chat ID<input value={chatId} onChange={(event) => setChatId(event.target.value)} required /></label>
           <label className="toggle-row"><span><b>Enable reminders</b><small>Uses a secured Supabase Edge Function</small></span><input type="checkbox" checked={telegramEnabled} onChange={(event) => setTelegramEnabled(event.target.checked)} /></label>
@@ -3115,7 +3071,7 @@ function SettingsPage({ userId, session, profile, preferences, theme, setTheme, 
         <button className="secondary export-all" onClick={() => void exportAllData()}><Download size={15} /> Export all records as JSON</button>
         <div className="export-list">{["tasks", "transactions", "journal_entries", "calendar_events", "goals"].map((table) => <button className="export-link" key={table} onClick={() => void exportTable(table)}><Download size={15} />{resourceLabel(table)}<span>CSV</span></button>)}</div></section>
       <section className="panel"><PanelHeading title="Connection status" detail="Local changes sync to Supabase when an internet connection is available." />
-        <div className="integration-row"><span className={`status-dot ${navigator.onLine ? "" : "muted-dot"}`} />Supabase {navigator.onLine ? "online" : "offline; changes are saved locally"}</div><div className="integration-row"><span className={`status-dot ${telegram.data?.[0]?.is_enabled ? "" : "muted-dot"}`} />Telegram {telegram.data?.[0]?.is_enabled ? "enabled; delivery needs deployed function" : "not enabled"}</div>
+        <div className="integration-row"><span className={`status-dot ${navigator.onLine ? "" : "muted-dot"}`} />Supabase {navigator.onLine ? "online; changes enabled" : "offline; changes disabled"}</div><div className="integration-row"><span className={`status-dot ${telegram.data?.[0]?.is_enabled ? "" : "muted-dot"}`} />Telegram {telegram.data?.[0]?.is_enabled ? "enabled; delivery needs deployed function" : "not enabled"}</div>
         <div className="integration-row"><span className={`status-dot ${navigator.onLine ? "" : "muted-dot"}`} />Browser {navigator.onLine ? "online" : "offline"}</div></section>
       <section className="panel panel-danger"><PanelHeading title="Account" detail="Sign out or request permanent account deletion." /><div className="inline-actions"><button className="secondary" onClick={onSignOut}><LogOut size={15} /> Sign out</button><button className="danger-button" onClick={() => setConfirmDeleteAccount(true)}><Trash2 size={15} /> Delete account</button></div><p className="muted">Account deletion requires the secured <code>delete-account</code> Edge Function.</p></section>
     </div>
@@ -3148,8 +3104,7 @@ function OnboardingDialog({ userId, profile, onDone, onToast }: { userId: string
       await enqueueUpsert(userId, "user_preferences", {
         currency: currencyCode.toUpperCase(), theme: "system",
       }, { onConflict: "user_id", cacheId: userId });
-      const result = navigator.onLine ? await syncAfterLocalWrite(supabase, userId)
-        : { remaining: await countPendingMutations(userId), error: null };
+      const result = await syncQueuedChanges(userId);
       onToast(savedLocallyMessage("Welcome to LifeOS. Your profile", result));
       onDone();
     } catch (error) { onToast(`Could not complete setup: ${error instanceof Error ? error.message : "Unknown error."}`, true); }
