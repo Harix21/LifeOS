@@ -47,8 +47,16 @@ LifeOS is a personal management workspace for tasks, goals, habits, journal entr
 
 4. In Supabase Authentication, configure the site URL and redirect allow-list for `http://localhost:5173` and your deployed origin. Enable email confirmation and configure password-reset email delivery with your project’s SMTP settings.
 5. To enable Google sign-in, open Authentication > Providers > Google in Supabase, enable Google, and add the Google OAuth client ID and secret. Add the same Supabase callback URL shown by Supabase (usually `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`) to the Google Cloud OAuth client. The app uses the current site origin as the post-login redirect.
+6. To enable the public contact form, create a Resend account and configure the Edge Function secrets. Keep these values server-side:
 
-6. Start the development server:
+   ```sh
+   supabase secrets set RESEND_API_KEY=YOUR_RESEND_API_KEY CONTACT_RECIPIENT=your-inbox@example.com
+   supabase functions deploy contact-message --no-verify-jwt
+   ```
+
+   Verify the sender domain in Resend before production use and replace the function's `from` address with a sender on that domain. The recipient address is never included in the browser bundle.
+
+7. Start the development server:
 
    ```sh
    npm run dev

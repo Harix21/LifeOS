@@ -1,10 +1,10 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
 import {
-  Activity, Bell, BookOpen, BriefcaseBusiness, CalendarDays, CreditCard, Droplets,
+  Activity, ArrowRight, Bell, BookOpen, BookOpenCheck, BriefcaseBusiness, CalendarDays, CreditCard, Droplets,
   Eye, EyeOff, Fingerprint,
   Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Dumbbell, Download, Flame, LayoutDashboard,
-  Heart, Leaf, LogOut, Menu, Moon, Plus, Search, Settings, Sun, Target, Trash2, UserRound, Wallet, X,
+  Heart, Leaf, LogOut, Mail, Menu, Moon, Plus, Search, Settings, Sun, Target, Trash2, UserRound, Wallet, X,
   Zap,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
@@ -605,8 +605,8 @@ function App() {
   }, []);
 
   if (authLoading) return <div className="full-screen"><span className="spinner" />Loading your session…</div>;
-  if (!session && !supabase) return <SetupScreen onDemo={() => { localStorage.setItem(DEMO_SESSION_KEY, "true"); setSession(createDemoSession()); }} />;
-  if (!session) return <AuthScreen initialError={authError} onDemo={() => { localStorage.setItem(DEMO_SESSION_KEY, "true"); setSession(createDemoSession()); }} />;
+  if (!session && !supabase) return <PublicSite onLogin={() => setAuthError("")} onDemo={() => { localStorage.setItem(DEMO_SESSION_KEY, "true"); setSession(createDemoSession()); }} setup />;
+  if (!session) return <PublicSite onLogin={() => setAuthError("")} onDemo={() => { localStorage.setItem(DEMO_SESSION_KEY, "true"); setSession(createDemoSession()); }} authError={authError} />;
   if (passwordRecovery && !isDemoSession(session)) return <PasswordUpdateScreen onDone={() => setPasswordRecovery(false)} />;
   return <Routes><Route path="*" element={<Workspace session={session} onExitDemo={() => {
     if (!supabase) { setSession(null); return; }
@@ -639,22 +639,6 @@ function PasswordUpdateScreen({ onDone }: { onDone: () => void }) {
   </section></main>;
 }
 
-function SetupScreen({ onDemo }: { onDemo: () => void }) {
-  return <main className="auth-page"><section className="auth-card">
-    <div className="brand auth-brand"><img className="auth-logo" src="/lifeos-logo.png" alt="LifeOS" /></div>
-    <h1>Connect your Supabase project</h1>
-    <p>Configure a Supabase project to sign in and persist your own records, or explore LifeOS with sample data.</p>
-    <ol className="setup-steps">
-      <li>Copy <code>.env.example</code> to <code>.env</code>.</li>
-      <li>Set <code>VITE_SUPABASE_URL</code> and <code>VITE_SUPABASE_ANON_KEY</code>.</li>
-      <li>Run the migrations in <code>supabase/migrations</code>.</li>
-      <li>Restart the Vite development server.</li>
-    </ol>
-    <button className="secondary full-width" onClick={onDemo}>Explore demo workspace</button>
-    <p className="muted small">Demo records are sample-only and are not saved to a real account.</p>
-  </section></main>;
-}
-
 function DemoSettingsPage({ onExitDemo }: { onExitDemo: () => void }) {
   return <div className="page">
     <div className="title"><div><p className="eyebrow">SAMPLE WORKSPACE</p><h1>Demo settings</h1><p>This sample account is read-only and does not connect to a real user profile.</p></div></div>
@@ -662,6 +646,56 @@ function DemoSettingsPage({ onExitDemo }: { onExitDemo: () => void }) {
       <button className="secondary" onClick={onExitDemo}><LogOut size={15} /> Exit demo</button>
     </section>
   </div>;
+}
+
+function PublicSite({ onLogin, onDemo, authError, setup = false }: { onLogin: () => void; onDemo: () => void; authError?: string; setup?: boolean }) {
+  const [view, setView] = useState<"home" | "auth" | "tutorial" | "contact">(setup ? "home" : "home");
+  if (view === "auth") return <><button className="public-back" onClick={() => setView("home")}>← Back to LifeOS</button><AuthScreen initialError={authError ?? ""} onDemo={onDemo} /></>;
+  return <main className="public-site">
+    <header className="public-nav"><button className="public-brand" onClick={() => setView("home")}><img src="/icons/lifeos-mark.png" alt="" /> LifeOS</button>
+      <nav><button onClick={() => setView("tutorial")}>Tutorial</button><button onClick={() => setView("contact")}>Contact</button><button className="secondary" onClick={() => { onLogin(); setView("auth"); }}>Log in</button></nav>
+    </header>
+    {view === "tutorial" ? <TutorialPage publicPage onBack={() => setView("home")} /> : view === "contact" ? <ContactPage onBack={() => setView("home")} /> : <section className="landing-hero">
+      <div className="landing-copy"><p className="eyebrow">ONE CALM PLACE FOR YOUR WHOLE LIFE</p><h1>Make space for what matters.</h1><p>LifeOS brings your plans, habits, health, projects, and money into one thoughtful workspace.</p>
+        <div className="landing-actions"><button className="primary" onClick={() => { onLogin(); setView("auth"); }}>Get started <ArrowRight size={15} /></button><button className="secondary" onClick={() => setView("tutorial")}><BookOpenCheck size={15} /> See how it works</button></div>
+        <div className="landing-downloads"><span><b>Web app</b><small>Use LifeOS on desktop or mobile browser</small></span><span><b>Android app</b><small>Take your routines with you</small></span></div>
+      </div>
+      <div className="landing-preview"><div className="preview-top"><span>LifeOS</span><span>✦ Today</span></div><div className="preview-card preview-main"><small>YOUR DAY, CLEARLY</small><h2>A little more intention.</h2><div className="preview-stat"><b>4</b><span>open tasks</span><b>₹12,450</b><span>monthly net</span></div></div><div className="preview-row"><div className="preview-card"><small>HABITS</small><b>3 check-ins today</b></div><div className="preview-card"><small>SAVINGS</small><b>72% toward goal</b></div></div></div>
+    </section>}
+    <footer className="public-footer"><span>© {new Date().getFullYear()} LifeOS</span><button onClick={() => setView("tutorial")}>Complete tutorial</button><button onClick={() => setView("contact")}><Mail size={13} /> Contact</button></footer>
+  </main>;
+}
+
+function TutorialPage({ publicPage = false, onBack }: { publicPage?: boolean; onBack?: () => void }) {
+  const steps = [
+    ["01", "Start with your day", "Use Today & Tomorrow to see tasks, habits, events, health logs, and money in one focused view."],
+    ["02", "Plan what matters", "Create tasks, goals, projects, and calendar events. Add dates and recurrence when something repeats."],
+    ["03", "Build better routines", "Create habits with reminders, check in from each habit’s calendar, and review your consistency."],
+    ["04", "Understand your money", "Add accounts and transactions, then connect savings contributions to an existing savings goal."],
+    ["05", "Make it yours", "Use Settings for theme, preferences, notifications, exports, and account security."],
+  ];
+  return <main className={`tutorial-page ${publicPage ? "tutorial-public" : "page"}`}><div className="title"><div><p className="eyebrow">LIFEOS GUIDE</p><h1>Everything in one clear rhythm.</h1><p>A practical tour of LifeOS, from your first sign-in to your everyday review.</p></div>{onBack && <button className="secondary" onClick={onBack}>Back to home</button>}</div>
+    <div className="tutorial-grid">{steps.map(([number, title, detail]) => <article className="tutorial-step" key={number}><span>{number}</span><div><h2>{title}</h2><p>{detail}</p></div></article>)}</div>
+    <section className="panel tutorial-tip"><BookOpenCheck size={20} /><div><h2>Start small</h2><p>Add one task, one habit, and one financial account first. LifeOS becomes more useful as your real routines grow.</p></div></section>
+  </main>;
+}
+
+function ContactPage({ onBack }: { onBack: () => void }) {
+  const [status, setStatus] = useState("");
+  const [sending, setSending] = useState(false);
+  async function submit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!supabase || sending) return;
+    setSending(true);
+    const form = new FormData(event.currentTarget);
+    const { error } = await supabase.functions.invoke("contact-message", { body: { name: form.get("name"), email: form.get("email"), message: form.get("message"), website: form.get("website") } });
+    setStatus(error ? `Could not send your message: ${error.message}` : "Thanks — your message has been sent.");
+    if (!error) event.currentTarget.reset();
+    setSending(false);
+  }
+  return <main className="contact-page"><div className="title"><div><p className="eyebrow">GET IN TOUCH</p><h1>Tell us what you need.</h1><p>Questions, feedback, or ideas for LifeOS? Send a message and we’ll get back to you.</p></div><button className="secondary" onClick={onBack}>Back to home</button></div>
+    <form className="contact-form panel" onSubmit={(event) => void submit(event)}><label>Name<input name="name" required maxLength={100} /></label><label>Email<input name="email" type="email" required maxLength={200} /></label><label className="contact-honeypot" aria-hidden="true">Website<input name="website" tabIndex={-1} autoComplete="off" /></label><label>Message<textarea name="message" rows={7} required maxLength={4000} /></label>{status && <p className="notice" role="status">{status}</p>}<button className="primary" disabled={sending}><Mail size={15} />{sending ? "Sending…" : "Send message"}</button></form>
+  </main>;
 }
 
 function AuthScreen({ initialError, onDemo }: { initialError: string; onDemo: () => void }) {
@@ -980,6 +1014,7 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
           : pageKey === "today" ? <TodayPage userId={user.id} currencyCode={String(preferenceQuery.data?.currency ?? "INR")} onNavigate={navigateTo} onQuickAdd={requestQuickAdd} />
             : pageKey === "finance_dashboard" ? <FinanceDashboard userId={user.id} currencyCode={String(preferenceQuery.data?.currency ?? "INR")} onNavigate={navigateTo} />
               : pageKey === "reports" ? <Reports userId={user.id} currencyCode={String(preferenceQuery.data?.currency ?? "INR")} />
+                : pageKey === "tutorial" ? <TutorialPage />
                 : pageKey === "calendar" ? <CalendarPage userId={user.id} onToast={notify} online={canWrite} weekStartsOn={Number(preferenceQuery.data?.week_starts_on ?? 1)} openRequest={quickAddTarget === "calendar_events" ? quickAddRequest : 0} onQuickAddConsumed={() => setQuickAddTarget("")} />
                 : pageKey === "settings" ? isDemoSession(session)
                   ? <DemoSettingsPage onExitDemo={() => void signOut()} />
@@ -1022,6 +1057,9 @@ function Workspace({ session, onExitDemo }: { session: AppSession; onExitDemo: (
         </button>
         <button className={`nav-group-title ${pageKey === "reports" ? "nav-group-active" : ""}`} onClick={() => navigateTo("reports")} aria-current={pageKey === "reports" ? "page" : undefined}>
           <Activity size={14} /><span>Analytics</span>
+        </button>
+        <button className={`nav-group-title ${pageKey === "tutorial" ? "nav-group-active" : ""}`} onClick={() => navigateTo("tutorial")} aria-current={pageKey === "tutorial" ? "page" : undefined}>
+          <BookOpenCheck size={14} /><span>Tutorial</span>
         </button>
       </nav>
       <div className="sidebottom">
