@@ -670,6 +670,7 @@ function AuthScreen({ initialError, onDemo }: { initialError: string; onDemo: ()
   const [password, setPassword] = useState("");
   const [name, setName] = useState("");
   const [message, setMessage] = useState(initialError);
+  const [verificationEmail, setVerificationEmail] = useState("");
   const [saving, setSaving] = useState(false);
 
   async function submit(event: FormEvent) {
@@ -681,7 +682,11 @@ function AuthScreen({ initialError, onDemo }: { initialError: string; onDemo: ()
       if (mode === "signup") {
         const { data, error } = await supabase.auth.signUp({ email, password, options: { data: { display_name: name } } });
         if (error) throw error;
-        setMessage(data.session ? "Account created." : "Check your email to verify your account before signing in.");
+        if (data.session) setMessage("Account created and signed in.");
+        else {
+          setVerificationEmail(email);
+          setMessage("Account created. Check your email and click the verification link before signing in.");
+        }
       } else if (mode === "reset") {
         const { error } = await supabase.auth.resetPasswordForEmail(email, { redirectTo: `${window.location.origin}/` });
         if (error) throw error;
@@ -691,8 +696,31 @@ function AuthScreen({ initialError, onDemo }: { initialError: string; onDemo: ()
         if (error) throw error;
       }
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : "Authentication failed.");
+      const text = error instanceof Error ? error.message : "Authentication failed.";
+      setMessage(/email not confirmed|email.*confirm/i.test(text)
+        ? "Please verify your email before signing in. Use the verification link in your inbox."
+        : text);
     } finally { setSaving(false); }
+  }
+  async function signInWithGoogle() {
+    if (!supabase || saving) return;
+    setSaving(true);
+    setMessage("");
+    const { error } = await supabase.auth.signInWithOAuth({
+      provider: "google",
+      options: { redirectTo: window.location.origin },
+    });
+    if (error) {
+      setMessage(error.message);
+      setSaving(false);
+    }
+  }
+  async function resendVerification() {
+    if (!supabase || !verificationEmail || saving) return;
+    setSaving(true);
+    const { error } = await supabase.auth.resend({ type: "signup", email: verificationEmail });
+    setMessage(error ? error.message : "A new verification email has been sent.");
+    setSaving(false);
   }
   return <main className="auth-page"><section className="auth-card">
     <div className="brand auth-brand"><img className="auth-logo" src="/lifeos-logo.png" alt="LifeOS" /></div>
@@ -705,6 +733,8 @@ function AuthScreen({ initialError, onDemo }: { initialError: string; onDemo: ()
       {message && <p className="notice" role="status">{message}</p>}
       <button className="primary full-width" type="submit" disabled={saving}>{saving ? "Please wait…" : mode === "signup" ? "Create account" : mode === "reset" ? "Send reset link" : "Sign in"}</button>
     </form>
+    {mode === "login" && <><div className="auth-divider"><span>or</span></div><button className="secondary full-width" type="button" onClick={() => void signInWithGoogle()} disabled={saving}><span className="google-mark">G</span> Continue with Google</button></>}
+    {verificationEmail && mode === "signup" && <button className="text-button" type="button" onClick={() => void resendVerification()} disabled={saving}>Resend verification email</button>}
     <div className="auth-links">
       {mode !== "login" && <button className="text-button" onClick={() => { setMode("login"); setMessage(""); }}>Back to sign in</button>}
       {mode === "login" && <><button className="text-button" onClick={() => { setMode("signup"); setMessage(""); }}>Create account</button><button className="text-button" onClick={() => { setMode("reset"); setMessage(""); }}>Forgot password?</button></>}

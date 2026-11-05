@@ -45,9 +45,10 @@ LifeOS is a personal management workspace for tasks, goals, habits, journal entr
    supabase db query --local --file supabase/tests/rls_check.sql
    ```
 
-4. In Supabase Authentication, configure the site URL and redirect allow-list for `http://localhost:5173` and your deployed origin. Set email verification and password-reset email delivery to match your project’s SMTP configuration.
+4. In Supabase Authentication, configure the site URL and redirect allow-list for `http://localhost:5173` and your deployed origin. Enable email confirmation and configure password-reset email delivery with your project’s SMTP settings.
+5. To enable Google sign-in, open Authentication > Providers > Google in Supabase, enable Google, and add the Google OAuth client ID and secret. Add the same Supabase callback URL shown by Supabase (usually `https://YOUR_PROJECT_REF.supabase.co/auth/v1/callback`) to the Google Cloud OAuth client. The app uses the current site origin as the post-login redirect.
 
-5. Start the development server:
+6. Start the development server:
 
    ```sh
    npm run dev
