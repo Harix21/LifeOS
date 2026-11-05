@@ -1269,11 +1269,12 @@ function TodayPage({ userId, currencyCode, onNavigate, onQuickAdd }: { userId: s
 
 function FinanceDashboard({ userId, currencyCode, onNavigate }: { userId: string; currencyCode: string; onNavigate: (key: string) => void }) {
   const transactions = useRows("transactions", userId);
+  const categories = useRows("transaction_categories", userId);
   const contributions = useRows("savings_contributions", userId);
   const budgets = useRows("budgets", userId);
   const savingsGoals = useRows("savings_goals", userId);
   const loans = useRows("loans", userId);
-  const queries = [transactions, contributions, budgets, savingsGoals, loans];
+  const queries = [transactions, categories, contributions, budgets, savingsGoals, loans];
   const error = queries.find((query) => query.error);
   const loading = queries.some((query) => query.isLoading);
   const tx = transactions.data ?? [];
@@ -1281,6 +1282,18 @@ function FinanceDashboard({ userId, currencyCode, onNavigate }: { userId: string
   const monthStart = `${today().slice(0, 7)}-01`;
   const todayTx = dateRows(tx, ["transaction_date"], today());
   const monthTx = tx.filter((row) => String(row.transaction_date) >= monthStart && String(row.transaction_date) <= today());
+  const categoryNames = new Map((categories.data ?? []).map((category) => [String(category.id), String(category.name ?? "Uncategorized")]));
+  const categoryTotals = (type: "expense" | "income") => {
+    const totals = new Map<string, number>();
+    for (const row of monthTx) {
+      if (row.type !== type) continue;
+      const label = categoryNames.get(String(row.category_id)) ?? "Uncategorized";
+      totals.set(label, (totals.get(label) ?? 0) + Number(row.amount ?? 0));
+    }
+    return [...totals].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  };
+  const expenseCategoryData = categoryTotals("expense");
+  const incomeCategoryData = categoryTotals("income");
   const todaySavings = dateRows(saves, ["contributed_on"], today()).reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
   const monthSavings = saves.filter((row) => String(row.contributed_on) >= monthStart && String(row.contributed_on) <= today()).reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
   const sumType = (rows: Row[], type: string) => rows.filter((row) => row.type === type).reduce((sum, row) => sum + Number(row.amount ?? 0), 0);
@@ -1311,6 +1324,12 @@ function FinanceDashboard({ userId, currencyCode, onNavigate }: { userId: string
       <div className="finance-dashboard-grid">
         <section className="panel"><PanelHeading title="Spending & savings" detail="Daily totals · last 7 days" />
           {chartData.some((point) => point.spent || point.saved) ? <div className="chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={chartData}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="day" tickLine={false} axisLine={false} /><YAxis /><Tooltip formatter={(value) => currency(Number(value), currencyCode)} /><Legend /><Bar dataKey="spent" name="Spent" fill="#e78b6e" radius={[4, 4, 0, 0]} /><Bar dataKey="saved" name="Saved" fill="#37ad83" radius={[4, 4, 0, 0]} /></BarChart></ResponsiveContainer></div> : <ChartEmpty text="Log transactions or savings contributions to see this chart." />}
+        </section>
+        <section className="panel"><PanelHeading title="Expenses by category" detail="Current month · select a category to compare spending" />
+          {expenseCategoryData.length ? <div className="chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={expenseCategoryData} layout="vertical" margin={{ left: 18, right: 12 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--line)" /><XAxis type="number" tickLine={false} axisLine={false} /><YAxis type="category" dataKey="label" width={84} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => currency(Number(value), currencyCode)} /><Bar dataKey="value" name="Expense" fill="#e78b6e" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <ChartEmpty text="Add an expense with a category this month to see the breakdown." />}
+        </section>
+        <section className="panel"><PanelHeading title="Income by category" detail="Current month · category totals" />
+          {incomeCategoryData.length ? <div className="chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={incomeCategoryData} layout="vertical" margin={{ left: 18, right: 12 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--line)" /><XAxis type="number" tickLine={false} axisLine={false} /><YAxis type="category" dataKey="label" width={84} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => currency(Number(value), currencyCode)} /><Bar dataKey="value" name="Income" fill="#37ad83" radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div> : <ChartEmpty text="Add income with a category this month to see the breakdown." />}
         </section>
         <section className="panel"><PanelHeading title="Budget usage" detail={`Current budget periods · ${currency(todayBudget.spent, currencyCode)} spent of ${currency(todayBudget.limit, currencyCode)} total limits`} action={() => onNavigate("budgets")} actionLabel="Manage budgets" />
           {todayBudget.usage.length ? <div className="budget-list">{todayBudget.usage.map((budget) => <div className="budget-row" key={budget.name}><div><b>{budget.name}</b><small>{currency(budget.spent, currencyCode)} / {currency(budget.amount, currencyCode)} · {budget.percent}%</small></div><progress max="100" value={Math.min(budget.percent, 100)} aria-label={`${budget.name} utilization ${budget.percent}%`} /></div>)}</div> : <ChartEmpty text="Create a budget to track spending against your limits." />}
@@ -2016,11 +2035,22 @@ function NutritionInsights({ rows }: { rows: Row[] }) {
   </div>;
 }
 
-function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] }) {
+function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resource; rows: Row[]; relatedRows?: Row[] }) {
   type Point = { label: string; value: number; compare?: number };
-  type ChartType = "bar" | "line" | "pie" | "metrics";
+  type ChartType = "bar" | "line" | "pie" | "metrics" | "progress" | "category-bars";
   const colors = ["#6888ee", "#37ad83", "#e78b6e", "#d18b53", "#8e62b5", "#48a9b5"];
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
+  const isCategoryPage = resource.key === "transaction_categories";
+  const [categoryMonth, setCategoryMonth] = useState(() => today().slice(0, 7));
+  const [categoryFrom, setCategoryFrom] = useState(() => `${today().slice(0, 7)}-01`);
+  const [categoryTo, setCategoryTo] = useState(today);
+  const selectCategoryMonth = (month: string) => {
+    setCategoryMonth(month);
+    const start = new Date(`${month}-01T12:00:00`);
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+    setCategoryFrom(`${month}-01`);
+    setCategoryTo(month === today().slice(0, 7) ? today() : localDateKey(end));
+  };
   const groupBy = (field: string, valueForRow: (row: Row) => number = () => 1): Point[] => {
     const groups = new Map<string, number>();
     for (const row of rows) {
@@ -2114,17 +2144,18 @@ function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] })
     case "financial_accounts":
       title = "Accounts by type"; detail = "Account distribution without combining different currencies"; chartType = "pie"; points = groupBy("type"); break;
     case "transaction_categories":
-      title = "Categories by type"; detail = "Income and expense categories"; chartType = "pie"; points = groupBy("type"); break;
+      title = "Transactions by category"; detail = "Income and expense totals for the selected dates"; chartType = "category-bars"; break;
     case "transactions":
       title = "Cash flow mix"; detail = "Transaction amounts split by income and expense"; valueLabel = "Amount"; chartType = "pie"; points = groupBy("type", (row) => Number(row.amount ?? 0)); break;
     case "loans":
       title = "Borrowed vs. lent"; detail = "Outstanding balances by direction"; valueLabel = "Balance"; chartType = "pie";
       points = groupBy("direction", (row) => row.is_settled ? 0 : Number(row.amount ?? 0)); break;
     case "budgets":
-      title = "Budget limits"; detail = "Planned amounts by budget"; valueLabel = "Limit"; points = groupBy("name", (row) => Number(row.amount ?? 0)); break;
+      title = "Budget usage"; detail = "Spent against each budget limit"; valueLabel = "Spent";
+      points = budgetTotals(rows, relatedRows, today()).usage.map((budget) => ({ label: budget.name, value: budget.spent, compare: budget.amount })); chartType = "progress"; break;
     case "savings_goals":
       title = "Savings goal progress"; detail = "Current amount compared with each target"; valueLabel = "Saved";
-      points = rows.slice(0, 8).map((row) => ({ label: String(row.name ?? "Goal"), value: Number(row.current_amount ?? 0), compare: Number(row.target_amount ?? 0) })); break;
+      points = rows.slice(0, 8).map((row) => ({ label: String(row.name ?? "Goal"), value: Number(row.current_amount ?? 0), compare: Number(row.target_amount ?? 0) })); chartType = "progress"; break;
     case "savings_contributions":
       title = "Savings contributions"; detail = "Contributions by month"; valueLabel = "Amount"; chartType = "line";
       points = byMonth("contributed_on", (row) => Number(row.amount ?? 0)); break;
@@ -2144,11 +2175,36 @@ function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] })
       points = groupBy(field);
     }
   }
+  const categoryNames = new Map(rows.map((row) => [String(row.id), String(row.name ?? "Uncategorized")]));
+  const categoryTypes = new Map(rows.map((row) => [String(row.id), String(row.type ?? "")]));
+  const categoryTotals = (type: "expense" | "income"): Point[] => {
+    const totals = new Map<string, number>();
+    for (const transaction of relatedRows) {
+      const date = String(transaction.transaction_date ?? "");
+      if (!date || date < categoryFrom || date > categoryTo || transaction.type !== type) continue;
+      const categoryId = String(transaction.category_id ?? "");
+      const label = categoryNames.get(categoryId) ?? "Uncategorized";
+      if (categoryId && categoryTypes.get(categoryId) && categoryTypes.get(categoryId) !== type) continue;
+      totals.set(label, (totals.get(label) ?? 0) + Number(transaction.amount ?? 0));
+    }
+    return [...totals].map(([label, value]) => ({ label, value })).sort((a, b) => b.value - a.value);
+  };
+  const expenseCategoryPoints = isCategoryPage ? categoryTotals("expense") : [];
+  const incomeCategoryPoints = isCategoryPage ? categoryTotals("income") : [];
   const total = points.reduce((sum, point) => sum + point.value, 0);
   const leading = [...points].sort((a, b) => b.value - a.value)[0];
   return <div className="task-insights-grid">
     <section className="panel"><PanelHeading title={title} detail={detail} />
+      {isCategoryPage && <div className="category-chart-filters">
+        <label className="filter-input date-filter"><span>Month</span><input type="month" value={categoryMonth} onChange={(event) => selectCategoryMonth(event.target.value)} aria-label="Select category chart month" /></label>
+        <label className="filter-input date-filter"><span>From</span><input type="date" value={categoryFrom} onChange={(event) => setCategoryFrom(event.target.value)} aria-label="Category chart from date" /></label>
+        <label className="filter-input date-filter"><span>To</span><input type="date" value={categoryTo} onChange={(event) => setCategoryTo(event.target.value)} aria-label="Category chart to date" /></label>
+      </div>}
       {rows.length ? <>
+        {chartType === "category-bars" ? <div className="category-chart-grid">
+          <CategoryBarChart title="Expenses by category" points={expenseCategoryPoints} color="#e78b6e" emptyText="No expenses in the selected date range." number={number} />
+          <CategoryBarChart title="Income by category" points={incomeCategoryPoints} color="#37ad83" emptyText="No income in the selected date range." number={number} />
+        </div> : <>
         <div className="record-insight-metrics">
           <div><small>Total records</small><b>{rows.length.toLocaleString()}</b></div>
           {chartType !== "metrics" && <div><small>{metricLabel || valueLabel}</small><b>{number(metricValue ?? total)}</b></div>}
@@ -2156,6 +2212,15 @@ function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] })
         </div>
         {chartType === "metrics" ? <div className="record-insight-metrics record-profile-metrics">{profileMetrics.map((metric) => <div key={metric.label}><small>{metric.label}</small><b>{metric.value}</b></div>)}</div>
           : !points.length ? <ChartEmpty text={`Add relevant ${resource.label.toLowerCase()} data to see this chart.`} />
+            : chartType === "progress" ? <div className="record-progress-list">{points.map((point) => {
+              const target = Math.max(0, point.compare ?? 0);
+              const percent = target ? Math.min(100, Math.round(point.value / target * 100)) : 0;
+              return <div className="record-progress-row" key={point.label}>
+                <div className="record-progress-heading"><b>{point.label}</b><span>{number(point.value)} of {number(target)}</span></div>
+                <progress max="100" value={percent} aria-label={`${point.label}: ${number(point.value)} of ${number(target)}`} />
+                <small>{percent}% complete</small>
+              </div>;
+            })}</div>
             : <div className="chart">
               <ResponsiveContainer width="100%" height="100%">
                 {chartType === "pie" ? <PieChart><Pie data={points} dataKey="value" nameKey="label" innerRadius="48%" outerRadius="76%" paddingAngle={3}>{points.map((point, index) => <Cell key={point.label} fill={colors[index % colors.length]} />)}</Pie><Tooltip formatter={(value) => number(Number(value))} /><Legend /></PieChart>
@@ -2163,9 +2228,15 @@ function RecordInsights({ resource, rows }: { resource: Resource; rows: Row[] })
                     : <BarChart data={points}><CartesianGrid strokeDasharray="3 3" vertical={false} stroke="var(--line)" /><XAxis dataKey="label" tickLine={false} axisLine={false} /><YAxis tickLine={false} axisLine={false} /><Tooltip formatter={(value) => `${number(Number(value))} ${valueLabel.toLowerCase()}`} /><Legend />{points.some((point) => point.compare !== undefined) && <Bar dataKey="compare" name="Target" fill="#d9e0f8" radius={[4, 4, 0, 0]} />}<Bar dataKey="value" name={valueLabel} fill="var(--accent)" radius={[4, 4, 0, 0]} /></BarChart>}
               </ResponsiveContainer>
             </div>}
-      </> : <ChartEmpty text={`Create a ${resource.label.toLowerCase()} record to see relevant metrics here.`} />}
+        </>} </> : <ChartEmpty text={`Create a ${resource.label.toLowerCase()} record to see relevant metrics here.`} />}
     </section>
   </div>;
+}
+
+function CategoryBarChart({ title, points, color, emptyText, number }: { title: string; points: { label: string; value: number }[]; color: string; emptyText: string; number: (value: number) => string }) {
+  return <section className="category-bar-chart"><h3>{title}</h3>
+    {!points.length ? <ChartEmpty text={emptyText} /> : <div className="chart category-chart"><ResponsiveContainer width="100%" height="100%"><BarChart data={points} layout="vertical" margin={{ left: 18, right: 12 }}><CartesianGrid strokeDasharray="3 3" horizontal={false} stroke="var(--line)" /><XAxis type="number" tickLine={false} axisLine={false} /><YAxis type="category" dataKey="label" width={84} tickLine={false} axisLine={false} /><Tooltip formatter={(value) => number(Number(value))} /><Bar dataKey="value" name={title.replace(" by category", "")} fill={color} radius={[0, 4, 4, 0]} /></BarChart></ResponsiveContainer></div>}
+  </section>;
 }
 
 function HabitInsights({ habits, completions, loading, busy, onToggleCheckin, selectedHabitId, onSelectHabit }: {
@@ -2253,6 +2324,8 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const accountTransactions = useRows("transactions", userId, resource.key === "financial_accounts");
   const savingsGoals = useRows("savings_goals", userId, resource.key === "savings_contributions" || resource.key === "savings_goals");
   const savingsContributions = useRows("savings_contributions", userId, resource.key === "savings_contributions" || resource.key === "savings_goals");
+  const budgetTransactions = useRows("transactions", userId, resource.key === "budgets");
+  const categoryTransactions = useRows("transactions", userId, resource.key === "transaction_categories");
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
@@ -2264,6 +2337,9 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const [statusFilter, setStatusFilter] = useState("all");
   const [areaFilter, setAreaFilter] = useState("all");
   const [sortMode, setSortMode] = useState("recent");
+  const [transactionMonth, setTransactionMonth] = useState(() => today().slice(0, 7));
+  const [transactionFrom, setTransactionFrom] = useState(() => `${today().slice(0, 7)}-01`);
+  const [transactionTo, setTransactionTo] = useState(today);
   const [selectedHabitId, setSelectedHabitId] = useState<string>();
   const [markingAll, setMarkingAll] = useState(false);
   useEffect(() => {
@@ -2273,6 +2349,14 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       onQuickAddConsumed();
     }
   }, [onQuickAddConsumed, openRequest]);
+  function selectTransactionMonth(month: string) {
+    setTransactionMonth(month);
+    const start = new Date(`${month}-01T12:00:00`);
+    const end = new Date(start.getFullYear(), start.getMonth() + 1, 0);
+    const endKey = localDateKey(end);
+    setTransactionFrom(`${month}-01`);
+    setTransactionTo(month === today().slice(0, 7) ? today() : endKey);
+  }
   const save = useMutation({
     mutationFn: async (values: Record<string, unknown>) => {
       const payload = cleanFormValues(values, fieldsForRecord(resource, Boolean(editing)));
@@ -2419,6 +2503,9 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       && (statusFilter === "all" || String(row.status) === statusFilter)
       && (areaFilter === "all" || String(row.area) === areaFilter)
     ))
+    .filter((row) => resource.key !== "transactions"
+      || (!transactionFrom || String(row.transaction_date ?? "") >= transactionFrom)
+      && (!transactionTo || String(row.transaction_date ?? "") <= transactionTo))
     .sort((a, b) => {
       if (sortMode === "priority" && resource.key === "tasks") {
         const priority = (priorityRank[String(a.priority ?? "medium")] ?? 1) - (priorityRank[String(b.priority ?? "medium")] ?? 1);
@@ -2479,12 +2566,15 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
     {resource.key === "tasks" && <TaskInsights rows={rows.data ?? []} />}
     {resource.key === "habits" ? <>{habitCompletions.error && <ErrorState error={habitCompletions.error} onRetry={() => void habitCompletions.refetch()} />}<HabitInsights habits={rows.data ?? []} completions={habitCompletions.data ?? []} loading={habitCompletions.isLoading} busy={toggleHabitCheckin.isPending} selectedHabitId={selectedHabitId} onSelectHabit={setSelectedHabitId} onToggleCheckin={(habitId, date, checked) => toggleHabitCheckin.mutate({ habitId, date, checked })} /></>
       : resource.key === "nutrition_entries" ? <NutritionInsights rows={rows.data ?? []} />
-        : resource.key !== "tasks" && !["personal_documents", "payment_cards"].includes(resource.key) && <RecordInsights resource={resource} rows={rows.data ?? []} />}
+        : resource.key !== "tasks" && !["personal_documents", "payment_cards"].includes(resource.key) && <RecordInsights resource={resource} rows={rows.data ?? []} relatedRows={(resource.key === "budgets" ? budgetTransactions.data : categoryTransactions.data) ?? []} />}
     {rows.isLoading ? <LoadingState /> : <section className="panel records-panel">
       <div className="records-toolbar"><div><h2>Your {resource.label.toLowerCase()}</h2><p>{resource.key === "loans"
         ? `${filteredLoanGroups.length} people · ${rows.data?.length ?? 0} entries · private to your account`
         : `${filtered.length} record${filtered.length === 1 ? "" : "s"} · ${rows.data?.length ?? 0} total · private to your account`}</p></div>
         <div className="inline-actions">{resource.key === "notifications" && <button className="secondary" disabled={!online || markingAll || !rows.data?.some((row) => !row.read_at)} onClick={() => void markAsRead()}>Mark all read</button>}
+          {resource.key === "transactions" && <><label className="filter-input date-filter"><span>Month</span><input type="month" value={transactionMonth} onChange={(event) => selectTransactionMonth(event.target.value)} aria-label="Select transaction month" /></label>
+            <label className="filter-input date-filter"><span>From</span><input type="date" value={transactionFrom} onChange={(event) => setTransactionFrom(event.target.value)} aria-label="Transactions from date" /></label>
+            <label className="filter-input date-filter"><span>To</span><input type="date" value={transactionTo} onChange={(event) => setTransactionTo(event.target.value)} aria-label="Transactions to date" /></label></>}
           <label className="filter-input task-filter"><span className="sr-only">Sort records</span><select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort records">
             {resource.key === "tasks" && <option value="priority">Priority & due date</option>}<option value="recent">Recently updated</option><option value="oldest">Oldest updated</option>
           </select></label>

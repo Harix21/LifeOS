@@ -185,6 +185,9 @@ svg{flex-shrink:0}
 .filter-input{display:flex;align-items:center;gap:7px;min-width:170px;padding:7px 9px;border:1px solid var(--line);border-radius:8px;color:var(--muted);background:var(--panel)}
 .filter-input input,.filter-input select{width:100%;min-width:0;border:0;outline:0;background:transparent;color:var(--text);font-size:10px}
 .filter-input select{appearance:none;min-width:120px}
+.date-filter{min-width:0}
+.date-filter span{font-size:9px;white-space:nowrap}
+.date-filter input{min-width:108px}
 .record-list{padding:0 16px}
 .record-card{display:flex;align-items:center;gap:13px;padding:13px 1px;border-bottom:1px solid var(--line);min-width:0;animation:record-enter .24s ease both;transition:background .16s ease,transform .16s ease}
 .record-card:hover{background:color-mix(in srgb,var(--bg) 45%,transparent);transform:translateX(2px)}
@@ -284,6 +287,18 @@ svg{flex-shrink:0}
 .record-insight-metrics>div{display:grid;gap:4px;min-width:0;padding:10px;border-radius:8px;background:var(--bg)}
 .record-insight-metrics small{font-size:9px;color:var(--muted)}
 .record-insight-metrics b{overflow:hidden;font-size:13px;text-overflow:ellipsis;white-space:nowrap}
+.record-progress-list{display:grid;gap:14px;padding:4px 1px}
+.record-progress-row{display:grid;gap:6px}
+.record-progress-heading{display:flex;align-items:baseline;justify-content:space-between;gap:10px}
+.record-progress-heading b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px}
+.record-progress-heading span,.record-progress-row small{color:var(--muted);font-size:9px}
+.record-progress-row progress{width:100%;height:9px;accent-color:var(--accent)}
+.record-progress-row small{text-align:right}
+.category-chart-filters{display:flex;flex-wrap:wrap;gap:8px;margin:-2px 0 12px}
+.category-chart-grid{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:18px}
+.category-bar-chart{min-width:0}
+.category-bar-chart h3{margin:0 0 5px;font-size:11px}
+.category-chart{height:250px}
 .record-profile-metrics{grid-template-columns:repeat(4,minmax(0,1fr));margin:0}
 .priority-chart{height:172px}
 .habit-calendar-controls{display:flex;align-items:center;gap:7px}
