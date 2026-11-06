@@ -188,6 +188,14 @@ svg{flex-shrink:0}
 .date-filter{min-width:0}
 .date-filter span{font-size:9px;white-space:nowrap}
 .date-filter input{min-width:108px}
+.date-filter svg{flex:0 0 auto;color:var(--accent)}
+.chart-expand-button{flex:0 0 auto;width:27px;height:27px}
+.chart-overlay{z-index:20}
+.chart-modal{width:min(980px,calc(100vw - 28px));max-height:calc(100vh - 28px);overflow:auto}
+.chart-modal>.task-insights-grid{display:block}
+.chart-modal>.task-insights-grid>.panel{border:0;box-shadow:none;padding:0}
+.chart-modal .chart{height:360px}
+.chart-scope-filter{margin-bottom:12px}
 .record-list{padding:0 16px}
 .record-card{display:flex;align-items:center;gap:13px;padding:13px 1px;border-bottom:1px solid var(--line);min-width:0;animation:record-enter .24s ease both;transition:background .16s ease,transform .16s ease}
 .record-card:hover{background:color-mix(in srgb,var(--bg) 45%,transparent);transform:translateX(2px)}
@@ -513,8 +521,8 @@ svg{flex-shrink:0}
 .app-footer .text-button{color:var(--muted)}
 .offline-banner{padding:8px 18px;background:#fff3dd;color:#805c16;border-bottom:1px solid #eed39b;font-size:10px}
 .dark .offline-banner{background:#403726;color:#efd187;border-color:#5b4b2f}
-.overlay{position:fixed;z-index:30;inset:0;display:grid;place-items:center;padding:16px;background:#080e1bcc;overflow:auto;animation:overlay-enter .16s ease both}
-.modal{width:min(500px,100%);max-height:min(90vh,850px);overflow:auto;padding:21px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;box-shadow:0 20px 70px #0004}
+.overlay{position:fixed;z-index:30;inset:0;display:flex;align-items:flex-start;justify-content:center;padding:clamp(10px,4vh,32px) 12px;background:#080e1bcc;overflow-y:auto;overscroll-behavior:contain;animation:overlay-enter .16s ease both}
+.modal{width:min(500px,100%);max-height:calc(100dvh - clamp(20px,8vh,64px));overflow:auto;padding:21px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;box-shadow:0 20px 70px #0004}
 .overlay .modal{animation:modal-enter .2s cubic-bezier(.2,.8,.2,1) both}
 .record-modal{width:min(660px,100%)}
 .onboarding-modal{width:min(670px,100%)}
@@ -657,8 +665,19 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
   .chart-tall{height:230px}
   .records-toolbar{align-items:flex-start;flex-direction:column}
   .records-toolbar>.inline-actions,.records-toolbar>.filter-input{width:100%}
+  .records-toolbar>.inline-actions{display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:7px;min-width:0}
+  .records-toolbar>.inline-actions>.filter-input{width:100%;min-width:0}
+  .records-toolbar>.inline-actions .date-filter input{width:1px;min-width:0;flex:1}
+  .records-toolbar>.inline-actions .task-filter select{min-width:0}
+  .records-toolbar>.inline-actions>.filter-input:last-child{grid-column:1/-1}
   .records-toolbar>.inline-actions .filter-input{flex:1}
   .record-list{padding:0 11px}
+  .category-chart-grid{grid-template-columns:1fr}
+  .category-chart-filters{display:grid;grid-template-columns:repeat(2,minmax(0,1fr))}
+  .category-chart-filters .date-filter{min-width:0}
+  .category-chart-filters .date-filter:last-child{grid-column:1/-1}
+  .chart-modal{width:calc(100vw - 18px);max-height:calc(100vh - 18px);padding:14px}
+  .chart-modal .chart{height:280px}
   .record-list:not(.identity-record-list) .record-card{display:grid;grid-template-columns:16px minmax(0,1fr) 82px;align-items:start;gap:5px;padding:5px 0}
   .record-list:not(.identity-record-list) .record-card:has(> .habit-icon){grid-template-columns:35px minmax(0,1fr) 82px}
   .record-list:not(.identity-record-list) .record-card:has(> .record-info:first-child){grid-template-columns:minmax(0,1fr) 82px}
@@ -706,7 +725,11 @@ input[type=checkbox]{width:17px;height:17px;accent-color:var(--accent)}
   .habit-calendar-row{gap:7px}
   .form-grid{grid-template-columns:1fr}
   .field-wide{grid-column:auto}
-  .modal{padding:16px}
+  .overlay{padding:8px}
+  .modal{width:100%;max-height:calc(100dvh - 16px);padding:16px;border-radius:12px}
+  .record-modal{width:100%}
+  .modalhead{position:sticky;top:-16px;z-index:2;padding:0 0 11px;background:var(--panel)}
+  .modal-actions{position:sticky;bottom:-16px;z-index:2;padding:11px 0 0;background:var(--panel)}
   .app-footer{padding:9px 13px 12px;font-size:8px}
   .auth-card{padding:20px}
   .export-list{grid-template-columns:1fr}

@@ -5,7 +5,7 @@ import {
   Eye, EyeOff, Fingerprint,
   Check, ChevronDown, ChevronLeft, ChevronRight, CircleHelp, Dumbbell, Download, Flame, LayoutDashboard,
   Heart, Leaf, LogOut, Mail, Menu, Moon, Plus, Search, Settings, Sun, Target, Trash2, UserRound, Wallet, X,
-  Zap, Sparkles,
+  Zap, Sparkles, Maximize2,
 } from "lucide-react";
 import type { LucideIcon } from "lucide-react";
 import { createClient } from "@supabase/supabase-js";
@@ -199,6 +199,8 @@ const resources: Resource[] = [
     { name: "person_name", label: "Person", required: true }, { name: "direction", label: "Direction", type: "select", options: ["borrowed", "lent"], required: true },
     { name: "amount", label: "Amount", type: "number", required: true, min: 0.01 }, { name: "loan_date", label: "Date", type: "date", required: true },
     { name: "due_date", label: "Due date", type: "date" }, { name: "is_settled", label: "Settled", type: "checkbox" },
+    { name: "settlement_account_id", label: "Settlement account", type: "relation", relationTable: "financial_accounts", relationLabel: "name" },
+    { name: "settled_at", label: "Settlement date", type: "date" },
     { name: "notes", label: "Notes", type: "textarea" },
   ] },
   { key: "budgets", label: "Budgets", table: "budgets", display: "name", fields: [
@@ -2035,12 +2037,28 @@ function NutritionInsights({ rows }: { rows: Row[] }) {
   </div>;
 }
 
-function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resource; rows: Row[]; relatedRows?: Row[] }) {
+function RecordInsights({ resource, rows, relatedRows = [], expanded = false }: { resource: Resource; rows: Row[]; relatedRows?: Row[]; expanded?: boolean }) {
   type Point = { label: string; value: number; compare?: number };
   type ChartType = "bar" | "line" | "pie" | "metrics" | "progress" | "category-bars";
   const colors = ["#6888ee", "#37ad83", "#e78b6e", "#d18b53", "#8e62b5", "#48a9b5"];
   const number = (value: number) => value.toLocaleString(undefined, { maximumFractionDigits: 1 });
   const isCategoryPage = resource.key === "transaction_categories";
+  const [isExpanded, setIsExpanded] = useState(false);
+  const [chartFrom, setChartFrom] = useState(() => `${today().slice(0, 7)}-01`);
+  const [chartTo, setChartTo] = useState(today);
+  const chartDateFields: Record<string, string> = {
+    habit_completions: "completed_on", journal_entries: "entry_date", mood_entries: "recorded_at",
+    project_milestones: "due_date", weight_entries: "recorded_on", workout_sessions: "started_at",
+    nutrition_entries: "consumed_at", water_entries: "consumed_at", transactions: "transaction_date",
+    loans: "loan_date", savings_contributions: "contributed_on", calendar_events: "starts_at",
+  };
+  const chartDateField = chartDateFields[resource.key];
+  const scopedRows = chartDateField
+    ? rows.filter((row) => {
+      const date = recordDateKey(row[chartDateField]);
+      return date ? date >= chartFrom && date <= chartTo : false;
+    })
+    : rows;
   const [categoryMonth, setCategoryMonth] = useState(() => today().slice(0, 7));
   const [categoryFrom, setCategoryFrom] = useState(() => `${today().slice(0, 7)}-01`);
   const [categoryTo, setCategoryTo] = useState(today);
@@ -2053,7 +2071,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
   };
   const groupBy = (field: string, valueForRow: (row: Row) => number = () => 1): Point[] => {
     const groups = new Map<string, number>();
-    for (const row of rows) {
+    for (const row of scopedRows) {
       const label = String(row[field] ?? "Unspecified").replaceAll("_", " ");
       const value = valueForRow(row);
       if (Number.isFinite(value)) groups.set(label, (groups.get(label) ?? 0) + value);
@@ -2062,7 +2080,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
   };
   const byMonth = (field: string, valueForRow: (row: Row) => number = () => 1): Point[] => {
     const groups = new Map<string, number>();
-    for (const row of rows) {
+    for (const row of scopedRows) {
       const date = recordDateKey(row[field]);
       if (!date) continue;
       const month = date.slice(0, 7);
@@ -2093,7 +2111,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
       title = "Projects by status"; detail = "Portfolio distribution by current status"; chartType = "pie"; points = groupBy("status"); break;
     case "project_milestones":
       title = "Milestone progress"; detail = "Completed compared with outstanding milestones"; chartType = "pie";
-      points = [{ label: "Completed", value: rows.filter((row) => row.completed_at).length }, { label: "Open", value: rows.filter((row) => !row.completed_at).length }].filter((point) => point.value > 0); break;
+      points = [{ label: "Completed", value: scopedRows.filter((row) => row.completed_at).length }, { label: "Open", value: scopedRows.filter((row) => !row.completed_at).length }].filter((point) => point.value > 0); break;
     case "skills":
       title = "Skill proficiency"; detail = "Your highest recorded proficiency levels"; valueLabel = "Proficiency (%)"; points = groupBy("name", (row) => Number(row.proficiency ?? 0)); break;
     case "job_applications":
@@ -2104,7 +2122,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
         ? Math.max(0, (new Date(String(row.ended_at)).getTime() - new Date(String(row.started_at)).getTime()) / 3_600_000) : 0); break;
     case "fitness_profiles": {
       title = "Your fitness targets"; detail = "Personal measures and daily targets"; chartType = "metrics";
-      const profile = rows[0];
+      const profile = scopedRows[0];
       profileMetrics = [
         { label: "Height", value: profile?.height_cm ? `${number(Number(profile.height_cm))} cm` : "Not set" },
         { label: "Target weight", value: profile?.target_weight_kg ? `${number(Number(profile.target_weight_kg))} kg` : "Not set" },
@@ -2115,7 +2133,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
     }
     case "weight_entries":
       title = "Weight history"; detail = "Recorded measurements over time"; valueLabel = "Weight (kg)"; chartType = "line";
-      points = [...rows].sort((a, b) => String(a.recorded_on).localeCompare(String(b.recorded_on)))
+      points = [...scopedRows].sort((a, b) => String(a.recorded_on).localeCompare(String(b.recorded_on)))
         .map((row) => ({ label: configuredDate(String(row.recorded_on)), value: Number(row.weight_kg) }));
       metricLabel = "Latest weight";
       metricValue = points.at(-1)?.value;
@@ -2124,11 +2142,11 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
       title = "Exercises by muscle group"; detail = "Your exercise library grouped by muscle group"; chartType = "pie"; points = groupBy("muscle_group"); break;
     case "workout_routines":
       title = "Routine library"; detail = "Your saved training plans"; chartType = "metrics";
-      profileMetrics = rows.slice(0, 4).map((row, index) => ({ label: `Routine ${index + 1}`, value: String(row.name ?? "Untitled") }));
+      profileMetrics = scopedRows.slice(0, 4).map((row, index) => ({ label: `Routine ${index + 1}`, value: String(row.name ?? "Untitled") }));
       break;
     case "workout_routine_exercises":
       title = "Routine volume"; detail = "Sets assigned by exercise position"; valueLabel = "Sets";
-      points = [...rows].sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0)).slice(0, 8)
+      points = [...scopedRows].sort((a, b) => Number(a.position ?? 0) - Number(b.position ?? 0)).slice(0, 8)
         .map((row, index) => ({ label: `Exercise ${index + 1}`, value: Number(row.sets ?? 0) })); break;
     case "workout_sessions":
       title = "Training time"; detail = "Workout minutes by month"; valueLabel = "Minutes"; chartType = "line";
@@ -2155,7 +2173,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
       points = budgetTotals(rows, relatedRows, today()).usage.map((budget) => ({ label: budget.name, value: budget.spent, compare: budget.amount })); chartType = "progress"; break;
     case "savings_goals":
       title = "Savings goal progress"; detail = "Current amount compared with each target"; valueLabel = "Saved";
-      points = rows.slice(0, 8).map((row) => ({ label: String(row.name ?? "Goal"), value: Number(row.current_amount ?? 0), compare: Number(row.target_amount ?? 0) })); chartType = "progress"; break;
+      points = scopedRows.slice(0, 8).map((row) => ({ label: String(row.name ?? "Goal"), value: Number(row.current_amount ?? 0), compare: Number(row.target_amount ?? 0) })); chartType = "progress"; break;
     case "savings_contributions":
       title = "Savings contributions"; detail = "Contributions by month"; valueLabel = "Amount"; chartType = "line";
       points = byMonth("contributed_on", (row) => Number(row.amount ?? 0)); break;
@@ -2165,7 +2183,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
       title = "Calendar activity"; detail = "Events scheduled by month"; chartType = "line"; points = byMonth("starts_at"); break;
     case "notifications":
       title = "Notification status"; detail = "Read and unread notifications"; chartType = "pie";
-      points = [{ label: "Read", value: rows.filter((row) => row.read_at).length }, { label: "Unread", value: rows.filter((row) => !row.read_at).length }].filter((point) => point.value > 0); break;
+      points = [{ label: "Read", value: scopedRows.filter((row) => row.read_at).length }, { label: "Unread", value: scopedRows.filter((row) => !row.read_at).length }].filter((point) => point.value > 0); break;
     default: {
       const categoricalField = resource.fields.find((field) => field.options?.length)?.name;
       const field = categoricalField ?? resource.display;
@@ -2193,21 +2211,30 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
   const incomeCategoryPoints = isCategoryPage ? categoryTotals("income") : [];
   const total = points.reduce((sum, point) => sum + point.value, 0);
   const leading = [...points].sort((a, b) => b.value - a.value)[0];
-  return <div className="task-insights-grid">
-    <section className="panel"><PanelHeading title={title} detail={detail} />
-      {isCategoryPage && <div className="category-chart-filters">
-        <label className="filter-input date-filter"><span>Month</span><input type="month" value={categoryMonth} onChange={(event) => selectCategoryMonth(event.target.value)} aria-label="Select category chart month" /></label>
-        <label className="filter-input date-filter"><span>From</span><input type="date" value={categoryFrom} onChange={(event) => setCategoryFrom(event.target.value)} aria-label="Category chart from date" /></label>
-        <label className="filter-input date-filter"><span>To</span><input type="date" value={categoryTo} onChange={(event) => setCategoryTo(event.target.value)} aria-label="Category chart to date" /></label>
+  const chartContentRows = isCategoryPage ? rows : scopedRows;
+  return <><div className={`task-insights-grid ${expanded ? "chart-expanded-content" : ""}`}>
+    <section className="panel"><div className="panel-heading"><div><h2>{title}</h2><p>{detail}</p></div>{!expanded && <button className="icon chart-expand-button" aria-label={`Open ${title} in full view`} title="Open full chart" onClick={() => setIsExpanded(true)}><Maximize2 size={13} /></button>}</div>
+      {chartDateField && <div className="category-chart-filters chart-scope-filter">
+        {!expanded ? <label className="filter-input date-filter"><CalendarDays size={12} /><span>Month</span><input type="month" value={chartFrom.slice(0, 7)} onChange={(event) => {
+          const month = event.target.value;
+          const end = new Date(Number(month.slice(0, 4)), Number(month.slice(5, 7)), 0);
+          setChartFrom(`${month}-01`);
+          setChartTo(month === today().slice(0, 7) ? today() : localDateKey(end));
+        }} aria-label="Select chart month" /></label> : <><label className="filter-input date-filter"><CalendarDays size={12} /><span>From</span><input type="date" value={chartFrom} onChange={(event) => setChartFrom(event.target.value)} aria-label="Chart from date" /></label><label className="filter-input date-filter"><CalendarDays size={12} /><span>To</span><input type="date" value={chartTo} onChange={(event) => setChartTo(event.target.value)} aria-label="Chart to date" /></label></>}
       </div>}
-      {rows.length ? <>
+      {isCategoryPage && <div className="category-chart-filters">
+        <label className="filter-input date-filter"><CalendarDays size={12} /><span>Month</span><input type="month" value={categoryMonth} onChange={(event) => selectCategoryMonth(event.target.value)} aria-label="Select category chart month" /></label>
+        {expanded && <><label className="filter-input date-filter"><CalendarDays size={12} /><span>From</span><input type="date" value={categoryFrom} onChange={(event) => setCategoryFrom(event.target.value)} aria-label="Category chart from date" /></label>
+        <label className="filter-input date-filter"><CalendarDays size={12} /><span>To</span><input type="date" value={categoryTo} onChange={(event) => setCategoryTo(event.target.value)} aria-label="Category chart to date" /></label></>}
+      </div>}
+      {chartContentRows.length ? <>
         {chartType === "category-bars" ? <div className="category-chart-grid">
           <CategoryBarChart title="Expenses by category" points={expenseCategoryPoints} color="#e78b6e" emptyText="No expenses in the selected date range." number={number} />
           <CategoryBarChart title="Income by category" points={incomeCategoryPoints} color="#37ad83" emptyText="No income in the selected date range." number={number} />
         </div> : <>
         <div className="record-insight-metrics">
-          <div><small>Total records</small><b>{rows.length.toLocaleString()}</b></div>
-          {chartType !== "metrics" && <div><small>{metricLabel || valueLabel}</small><b>{number(metricValue ?? total)}</b></div>}
+          <div><small>Total records</small><b>{chartContentRows.length.toLocaleString()}</b></div>
+          {resource.key === "transactions" ? <><div><small>Income</small><b>{number(scopedRows.filter((row) => row.type === "income").reduce((sum, row) => sum + Number(row.amount ?? 0), 0))}</b></div><div><small>Expense</small><b>{number(scopedRows.filter((row) => row.type === "expense").reduce((sum, row) => sum + Number(row.amount ?? 0), 0))}</b></div></> : chartType !== "metrics" && <div><small>{metricLabel || valueLabel}</small><b>{number(metricValue ?? total)}</b></div>}
           {leading && <div><small>Leading {chartType === "pie" ? "group" : "item"}</small><b>{leading.label} · {number(leading.value)}</b></div>}
         </div>
         {chartType === "metrics" ? <div className="record-insight-metrics record-profile-metrics">{profileMetrics.map((metric) => <div key={metric.label}><small>{metric.label}</small><b>{metric.value}</b></div>)}</div>
@@ -2230,7 +2257,7 @@ function RecordInsights({ resource, rows, relatedRows = [] }: { resource: Resour
             </div>}
         </>} </> : <ChartEmpty text={`Create a ${resource.label.toLowerCase()} record to see relevant metrics here.`} />}
     </section>
-  </div>;
+  </div>{isExpanded && !expanded && <div className="overlay chart-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsExpanded(false); }}><section className="modal chart-modal" role="dialog" aria-modal="true" aria-label={`${title} full view`}><div className="modalhead"><div><p className="eyebrow">FULL CHART VIEW</p><h2>{title}</h2></div><button className="icon" aria-label="Close chart" onClick={() => setIsExpanded(false)}><X size={15} /></button></div><RecordInsights resource={resource} rows={rows} relatedRows={relatedRows} expanded /></section></div>}</>;
 }
 
 function CategoryBarChart({ title, points, color, emptyText, number }: { title: string; points: { label: string; value: number }[]; color: string; emptyText: string; number: (value: number) => string }) {
@@ -2322,6 +2349,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const habitCompletions = useRows("habit_completions", userId, resource.key === "habits");
   const linkedAccounts = useRows("financial_accounts", userId, resource.key === "payment_cards");
   const accountTransactions = useRows("transactions", userId, resource.key === "financial_accounts");
+  const settlementAccounts = useRows("financial_accounts", userId, resource.key === "loans");
   const savingsGoals = useRows("savings_goals", userId, resource.key === "savings_contributions" || resource.key === "savings_goals");
   const savingsContributions = useRows("savings_contributions", userId, resource.key === "savings_contributions" || resource.key === "savings_goals");
   const budgetTransactions = useRows("transactions", userId, resource.key === "budgets");
@@ -2416,6 +2444,20 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
         ...payload,
         ...(!isSingleton ? { id: recordId } : {}),
       }, { onConflict: isSingleton ? "user_id" : "id", cacheId: recordId });
+      if (resource.key === "loans" && payload.is_settled && !editing?.is_settled) {
+        const settlementAccountId = String(payload.settlement_account_id ?? "");
+        if (!settlementAccountId) throw new Error("Choose the account used for settlement.");
+        await saveQueuedRow(userId, "transactions", {
+          id: crypto.randomUUID(),
+          title: `${payload.direction === "lent" ? "Loan repayment received from" : "Loan repayment to"} ${String(payload.person_name)}`,
+          amount: Number(payload.amount),
+          type: payload.direction === "lent" ? "income" : "expense",
+          transaction_date: String(payload.settled_at || today()),
+          account_id: settlementAccountId,
+          account_paid_amount: Number(payload.amount),
+          notes: "Created when a borrowed or lent balance was settled.",
+        });
+      }
       if (resource.key === "savings_contributions" && payload.savings_goal_id) {
         const goalId = String(payload.savings_goal_id);
         const total = (savingsContributions.data ?? [])
@@ -2430,6 +2472,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       await queryClient.invalidateQueries({ queryKey: ["rows", userId, resource.table] });
       if (resource.key === "savings_contributions") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "savings_goals"] });
       if (resource.key === "transactions" || resource.key === "nutrition_entries") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "loans"] });
+      if (resource.key === "loans") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "transactions"] });
       setDialog(false); setEditing(null); onToast(savedLocallyMessage(resource.label, result));
     },
     onError: (error) => onToast(`Could not save ${resource.label.toLowerCase()}: ${error.message}`, true),
@@ -2572,9 +2615,9 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
         ? `${filteredLoanGroups.length} people · ${rows.data?.length ?? 0} entries · private to your account`
         : `${filtered.length} record${filtered.length === 1 ? "" : "s"} · ${rows.data?.length ?? 0} total · private to your account`}</p></div>
         <div className="inline-actions">{resource.key === "notifications" && <button className="secondary" disabled={!online || markingAll || !rows.data?.some((row) => !row.read_at)} onClick={() => void markAsRead()}>Mark all read</button>}
-          {resource.key === "transactions" && <><label className="filter-input date-filter"><span>Month</span><input type="month" value={transactionMonth} onChange={(event) => selectTransactionMonth(event.target.value)} aria-label="Select transaction month" /></label>
-            <label className="filter-input date-filter"><span>From</span><input type="date" value={transactionFrom} onChange={(event) => setTransactionFrom(event.target.value)} aria-label="Transactions from date" /></label>
-            <label className="filter-input date-filter"><span>To</span><input type="date" value={transactionTo} onChange={(event) => setTransactionTo(event.target.value)} aria-label="Transactions to date" /></label></>}
+          {resource.key === "transactions" && <><label className="filter-input date-filter"><CalendarDays size={12} /><span>Month</span><input type="month" value={transactionMonth} onChange={(event) => selectTransactionMonth(event.target.value)} aria-label="Select transaction month" /></label>
+            <label className="filter-input date-filter"><CalendarDays size={12} /><span>From</span><input type="date" value={transactionFrom} onChange={(event) => setTransactionFrom(event.target.value)} aria-label="Transactions from date" /></label>
+            <label className="filter-input date-filter"><CalendarDays size={12} /><span>To</span><input type="date" value={transactionTo} onChange={(event) => setTransactionTo(event.target.value)} aria-label="Transactions to date" /></label></>}
           <label className="filter-input task-filter"><span className="sr-only">Sort records</span><select value={sortMode} onChange={(event) => setSortMode(event.target.value)} aria-label="Sort records">
             {resource.key === "tasks" && <option value="priority">Priority & due date</option>}<option value="recent">Recently updated</option><option value="oldest">Oldest updated</option>
           </select></label>
@@ -2584,6 +2627,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           <label className="filter-input"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${resource.label.toLowerCase()}`} /></label></div></div>
       {!visibleRecordCount ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored on this device and synced to your Supabase account."} action={!rows.data?.length && <button className="text-button" onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
         : resource.key === "loans" ? <div className="record-list loan-person-list">{filteredLoanGroups.map((group) => <LoanGroupCard key={group.key} group={group} online={online}
+          accountNames={new Map((settlementAccounts.data ?? []).map((account) => [String(account.id), String(account.name)]))}
           onViewTransactions={() => setViewingLoanGroup(group)}
           onEdit={(row) => { setEditing(row); setDialog(true); }} />)}</div>
         : <div className={`record-list ${["personal_documents", "payment_cards"].includes(resource.key) ? "identity-record-list" : ""}`}>{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row}
@@ -2702,9 +2746,10 @@ function RecordCard({ resource, row, onEdit, onCheckIn, onMarkRead, onPriorityCh
     </div></article>;
 }
 
-function LoanGroupCard({ group, online, onViewTransactions, onEdit }: {
+function LoanGroupCard({ group, online, accountNames, onViewTransactions, onEdit }: {
   group: LoanGroup;
   online: boolean;
+  accountNames: Map<string, string>;
   onViewTransactions: () => void;
   onEdit: (row: Row) => void;
 }) {
@@ -2721,7 +2766,7 @@ function LoanGroupCard({ group, online, onViewTransactions, onEdit }: {
         </button>
       </div>
       {expanded && <div className="loan-person-entries">{group.entries.map((entry) => <div className="loan-entry" key={entry.id}>
-        <div><b>{loanCurrency(Number(entry.amount ?? 0))}</b><small>{configuredDate(String(entry.loan_date ?? ""))}{entry.is_settled ? " · Settled" : ""}</small>
+        <div><b>{loanCurrency(Number(entry.amount ?? 0))}</b><small>{configuredDate(String(entry.loan_date ?? ""))}{entry.is_settled ? ` · Settled${entry.settlement_account_id ? ` from ${accountNames.get(String(entry.settlement_account_id)) ?? "selected account"}` : ""}` : ""}</small>
           {entry.notes !== null && entry.notes !== undefined && entry.notes !== "" && <small>{String(entry.notes)}</small>}</div>
         <div className="inline-actions"><button className="secondary" disabled={!online} onClick={() => onEdit(entry)}>Edit</button></div>
       </div>)}</div>}
@@ -2737,21 +2782,25 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDe
     account_paid_amount: "",
     borrowed_amount: "",
   }), [initial, resource]);
-  const { register, handleSubmit, reset, setError, watch, formState: { errors } } = useForm<Record<string, unknown>>({
+  const { register, handleSubmit, reset, setError, setValue, watch, formState: { errors } } = useForm<Record<string, unknown>>({
     defaultValues: defaults,
   });
   useEffect(() => reset(defaults), [defaults, reset]);
   const schema = useMemo(() => validateSchema(formFields), [formFields]);
-  const requiredFields = formFields.filter((field) => field.required);
+  const primaryTransactionFields = resource.key === "transactions" ? new Set(["category_id"]) : new Set<string>();
+  const requiredFields = formFields.filter((field) => field.required || primaryTransactionFields.has(field.name));
   const transactionType = watch("type");
+  useEffect(() => {
+    if (resource.key === "transactions" && !initial) setValue("category_id", "");
+  }, [initial, resource.key, setValue, transactionType]);
   const showFundingFields = resource.key === "transactions" && !initial && transactionType === "expense";
-  const optionalFields = formFields.filter((field) => !field.required && !(showFundingFields && field.name === "account_id"));
+  const optionalFields = formFields.filter((field) => !field.required && !primaryTransactionFields.has(field.name) && !(showFundingFields && field.name === "account_id"));
   const accountOptions = useRows("financial_accounts", userId, showFundingFields);
   const fundingSource = watch("funding_source");
   const transactionAmount = watch("amount");
   const renderField = (field: Field) => <label key={field.name} className={`form-field ${field.type === "textarea" ? "field-wide" : ""}`}>
-    <span>{field.label}{field.required && <i> *</i>}</span>
-    {field.type === "relation" ? <RelationInput field={field} userId={userId} register={register(field.name, { required: field.required })} />
+    <span>{field.label}{(field.required || primaryTransactionFields.has(field.name)) && <i> *</i>}</span>
+    {field.type === "relation" ? <RelationInput field={field} userId={userId} register={register(field.name, { required: field.required || primaryTransactionFields.has(field.name) })} filterType={field.name === "category_id" ? String(transactionType ?? "") : undefined} />
       : field.type === "select" ? <select defaultValue={String(defaults[field.name] || field.options?.[0] || "")} {...register(field.name, { required: field.required })} aria-label={field.label}>
         {field.options?.map((option) => <option key={option} value={option}>{option.replaceAll("_", " ")}</option>)}</select>
         : field.type === "textarea" ? <textarea rows={3} {...register(field.name)} />
@@ -2761,6 +2810,10 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDe
   function submit(values: Record<string, unknown>) {
     if (resource.key === "payment_cards" && values.last_four && !/^\d{4}$/.test(String(values.last_four))) {
       setError("last_four", { message: "Enter exactly the last four digits." });
+      return;
+    }
+    if (resource.key === "loans" && values.is_settled && !initial?.is_settled && !String(values.settlement_account_id ?? "")) {
+      setError("settlement_account_id", { message: "Choose the account used for settlement." });
       return;
     }
     if (showFundingFields) {
@@ -2856,10 +2909,10 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDe
   </div>;
 }
 
-function RelationInput({ field, userId, register }: { field: Field; userId: string; register: UseFormRegisterReturn }) {
+function RelationInput({ field, userId, register, filterType }: { field: Field; userId: string; register: UseFormRegisterReturn; filterType?: string }) {
   const options = useRows(field.relationTable ?? "", userId, Boolean(field.relationTable && userId));
-  return <select {...register} required={field.required}><option value="">Select…</option>
-    {(options.data ?? []).map((row) => <option key={row.id} value={row.id}>{String(row[field.relationLabel ?? "name"] ?? row.id)}</option>)}
+  return <select {...register} required={field.required || field.name === "category_id"}><option value="">Select…</option>
+    {(options.data ?? []).filter((row) => !filterType || String(row.type ?? "") === filterType).map((row) => <option key={row.id} value={row.id}>{String(row[field.relationLabel ?? "name"] ?? row.id)}</option>)}
   </select>;
 }
 
