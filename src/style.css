@@ -524,10 +524,11 @@ svg{flex-shrink:0}
 .app-footer .text-button{color:var(--muted)}
 .offline-banner{padding:8px 18px;background:#fff3dd;color:#805c16;border-bottom:1px solid #eed39b;font-size:10px}
 .dark .offline-banner{background:#403726;color:#efd187;border-color:#5b4b2f}
-.overlay{position:fixed;z-index:100;inset:0;display:grid;place-items:center;padding:0;background:var(--panel);overflow:hidden;overscroll-behavior:none;animation:overlay-enter .16s ease both}
-.modal{position:fixed;inset:0;width:100vw;height:100dvh;max-width:none;max-height:none;margin:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch;padding:21px max(21px,env(safe-area-inset-right)) max(21px,env(safe-area-inset-bottom)) max(21px,env(safe-area-inset-left));background:var(--panel);color:var(--text);border:0;border-radius:0;box-shadow:none}
+.overlay{position:fixed;z-index:100;inset:0;display:grid;place-items:center;padding:24px;background:#080e1bcc;overflow:hidden;overscroll-behavior:none;animation:overlay-enter .16s ease both}
+.modal{position:relative;width:min(500px,calc(100vw - 48px));height:auto;max-height:calc(100dvh - 48px);margin:0;min-height:0;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;touch-action:pan-y;-webkit-overflow-scrolling:touch;padding:21px;background:var(--panel);color:var(--text);border:1px solid var(--line);border-radius:14px;box-shadow:0 20px 70px #0004}
 .overlay .modal{animation:modal-enter .2s cubic-bezier(.2,.8,.2,1) both}
-.record-modal,.onboarding-modal,.loan-transactions-modal,.chart-modal{width:100vw;max-width:none;height:100dvh;max-height:none}
+.record-modal,.onboarding-modal,.loan-transactions-modal{width:min(700px,calc(100vw - 48px));max-height:calc(100dvh - 48px)}
+.chart-modal{width:min(980px,calc(100vw - 48px));max-height:calc(100dvh - 48px)}
 .confirm-modal{position:relative;inset:auto;width:min(450px,calc(100vw - 48px));height:auto;max-height:calc(100dvh - 48px);margin:0}
 .modalhead{display:flex;justify-content:space-between;align-items:flex-start;gap:10px;margin-bottom:15px}
 .modalhead h2{margin:5px 0 0;font-size:17px;letter-spacing:-.3px}
