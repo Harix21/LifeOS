@@ -1,5 +1,6 @@
 import { useEffect, useLayoutEffect, useMemo, useRef, useState } from "react";
 import type { ChangeEvent, FormEvent, ReactNode } from "react";
+import { createPortal } from "react-dom";
 import {
   Activity, ArrowRight, Bell, BookOpen, BookOpenCheck, BriefcaseBusiness, CalendarDays, CreditCard, Droplets,
   Eye, EyeOff, Fingerprint,
@@ -67,6 +68,10 @@ type Toast = { id: number; text: string; error?: boolean };
 type DemoSession = { demo: true; user: { id: string; email: string; user_metadata: { display_name: string } } };
 type AppSession = Session | DemoSession;
 const DEMO_SESSION_KEY = "lifeos-demo-session";
+
+function AppPortal({ children }: { children: ReactNode }) {
+  return createPortal(children, document.body);
+}
 
 function isDemoSession(session: AppSession): session is DemoSession {
   return "demo" in session;
@@ -2257,7 +2262,7 @@ function RecordInsights({ resource, rows, relatedRows = [], expanded = false }: 
             </div>}
         </>} </> : <ChartEmpty text={`Create a ${resource.label.toLowerCase()} record to see relevant metrics here.`} />}
     </section>
-  </div>{isExpanded && !expanded && <div className="overlay chart-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsExpanded(false); }}><section className="modal chart-modal" role="dialog" aria-modal="true" aria-label={`${title} full view`}><div className="modalhead"><div><p className="eyebrow">FULL CHART VIEW</p><h2>{title}</h2></div><button className="icon" aria-label="Close chart" onClick={() => setIsExpanded(false)}><X size={15} /></button></div><RecordInsights resource={resource} rows={rows} relatedRows={relatedRows} expanded /></section></div>}</>;
+  </div>{isExpanded && !expanded && <AppPortal><div className="overlay chart-overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setIsExpanded(false); }}><section className="modal chart-modal" role="dialog" aria-modal="true" aria-label={`${title} full view`}><div className="modalhead"><div><p className="eyebrow">FULL CHART VIEW</p><h2>{title}</h2></div><button className="icon" aria-label="Close chart" onClick={() => setIsExpanded(false)}><X size={15} /></button></div><RecordInsights resource={resource} rows={rows} relatedRows={relatedRows} expanded /></section></div></AppPortal>}</>;
 }
 
 function CategoryBarChart({ title, points, color, emptyText, number }: { title: string; points: { label: string; value: number }[]; color: string; emptyText: string; number: (value: number) => string }) {
@@ -2357,6 +2362,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const queryClient = useQueryClient();
   const [dialog, setDialog] = useState(false);
   const [editing, setEditing] = useState<Row | null>(null);
+  const [settlementTarget, setSettlementTarget] = useState<Row | null>(null);
   const [deleting, setDeleting] = useState<Row | null>(null);
   const [viewingLoanGroup, setViewingLoanGroup] = useState<LoanGroup | null>(null);
   const linkedTransactions = useRows("transactions", userId, resource.key === "loans" && Boolean(viewingLoanGroup));
@@ -2365,6 +2371,8 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
   const [statusFilter, setStatusFilter] = useState("all");
   const [areaFilter, setAreaFilter] = useState("all");
   const [sortMode, setSortMode] = useState("recent");
+  const [recordPage, setRecordPage] = useState(1);
+  const [transactionPage, setTransactionPage] = useState(1);
   const [transactionMonth, setTransactionMonth] = useState(() => today().slice(0, 7));
   const [transactionFrom, setTransactionFrom] = useState(() => `${today().slice(0, 7)}-01`);
   const [transactionTo, setTransactionTo] = useState(today);
@@ -2473,7 +2481,7 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       if (resource.key === "savings_contributions") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "savings_goals"] });
       if (resource.key === "transactions" || resource.key === "nutrition_entries") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "loans"] });
       if (resource.key === "loans") await queryClient.invalidateQueries({ queryKey: ["rows", userId, "transactions"] });
-      setDialog(false); setEditing(null); onToast(savedLocallyMessage(resource.label, result));
+      setDialog(false); setEditing(null); setSettlementTarget(null); onToast(savedLocallyMessage(resource.label, result));
     },
     onError: (error) => onToast(`Could not save ${resource.label.toLowerCase()}: ${error.message}`, true),
   });
@@ -2568,12 +2576,30 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
       const bActivity = new Date(String(b.entries[0]?.updated_at ?? b.entries[0]?.created_at ?? 0)).getTime();
       return sortMode === "oldest" ? aActivity - bActivity : bActivity - aActivity;
     });
+  const recordsPageSize = 20;
   const linkedTransactionIds = new Set((viewingLoanGroup?.entries ?? [])
     .map((row) => String(row.transaction_id ?? "")).filter(Boolean));
   const transactionsForLoanGroup = (linkedTransactions.data ?? [])
     .filter((transaction) => linkedTransactionIds.has(transaction.id))
     .sort((a, b) => String(b.transaction_date ?? "").localeCompare(String(a.transaction_date ?? "")));
+  const transactionPageCount = Math.max(1, Math.ceil(transactionsForLoanGroup.length / recordsPageSize));
+  const visibleTransactions = transactionsForLoanGroup.slice((transactionPage - 1) * recordsPageSize, transactionPage * recordsPageSize);
+  useEffect(() => {
+    setTransactionPage(1);
+  }, [viewingLoanGroup?.key]);
+  useEffect(() => {
+    setTransactionPage((page) => Math.min(page, transactionPageCount));
+  }, [transactionPageCount]);
   const visibleRecordCount = resource.key === "loans" ? filteredLoanGroups.length : filtered.length;
+  const recordPageCount = Math.max(1, Math.ceil(visibleRecordCount / recordsPageSize));
+  const visibleLoanGroups = filteredLoanGroups.slice((recordPage - 1) * recordsPageSize, recordPage * recordsPageSize);
+  const visibleRows = filtered.slice((recordPage - 1) * recordsPageSize, recordPage * recordsPageSize);
+  useEffect(() => {
+    setRecordPage(1);
+  }, [areaFilter, filter, priorityFilter, resource.key, sortMode, statusFilter, transactionFrom, transactionTo]);
+  useEffect(() => {
+    setRecordPage((page) => Math.min(page, recordPageCount));
+  }, [recordPageCount]);
   const accountBalances = useMemo(() => {
     const balances = new Map<string, number>();
     for (const account of rows.data ?? []) balances.set(String(account.id), Number(account.opening_balance ?? 0));
@@ -2626,11 +2652,12 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           {resource.key === "tasks" && <label className="filter-input task-filter"><span className="sr-only">Filter by category</span><select value={areaFilter} onChange={(event) => setAreaFilter(event.target.value)}><option value="all">All categories</option>{Object.keys(areaStyles).map((areaName) => <option key={areaName} value={areaName}>{areaName}</option>)}</select></label>}
           <label className="filter-input"><Search size={15} /><input value={filter} onChange={(event) => setFilter(event.target.value)} placeholder={`Filter ${resource.label.toLowerCase()}`} /></label></div></div>
       {!visibleRecordCount ? <EmptyState title={rows.data?.length ? "No matching records" : `No ${resource.label.toLowerCase()} yet`} detail={rows.data?.length ? "Try another search." : "Add your first record. It will be stored on this device and synced to your Supabase account."} action={!rows.data?.length && <button className="text-button" onClick={() => setDialog(true)}><Plus size={14} /> Create first record</button>} />
-        : resource.key === "loans" ? <div className="record-list loan-person-list">{filteredLoanGroups.map((group) => <LoanGroupCard key={group.key} group={group} online={online}
+        : resource.key === "loans" ? <><div className="record-list loan-person-list">{visibleLoanGroups.map((group) => <LoanGroupCard key={group.key} group={group} online={online}
           accountNames={new Map((settlementAccounts.data ?? []).map((account) => [String(account.id), String(account.name)]))}
           onViewTransactions={() => setViewingLoanGroup(group)}
-          onEdit={(row) => { setEditing(row); setDialog(true); }} />)}</div>
-        : <div className={`record-list ${["personal_documents", "payment_cards"].includes(resource.key) ? "identity-record-list" : ""}`}>{filtered.map((row) => <RecordCard key={row.id} resource={resource} row={row}
+          onEdit={(row) => { setEditing(row); setDialog(true); }}
+          onSettle={(row) => setSettlementTarget(row)} />)}</div><Pagination page={recordPage} pageCount={recordPageCount} onChange={setRecordPage} /></>
+        : <><div className={`record-list ${["personal_documents", "payment_cards"].includes(resource.key) ? "identity-record-list" : ""}`}>{visibleRows.map((row) => <RecordCard key={row.id} resource={resource} row={row}
           linkedAccountName={(linkedAccounts.data ?? []).find((account) => account.id === row.account_id)?.name as string | undefined}
           checkins={habitCompletions.data ?? []}
           onFieldChange={(field, value) => updateInlineField.mutate({ row, field, value })}
@@ -2638,24 +2665,26 @@ function RecordsPage({ resource, userId, online, onToast, openRequest, onQuickAd
           onViewHabitCalendar={resource.key === "habits" ? () => setSelectedHabitId(String(row.id)) : undefined}
           onEdit={() => { setEditing(row); setDialog(true); }} onPriorityChange={resource.key === "tasks" ? (priority) => changePriority.mutate({ row, priority }) : undefined} onMarkRead={resource.key === "notifications" && !row.read_at ? () => void markAsRead(row) : undefined} onCheckIn={resource.key === "habits" ? async () => {
           toggleHabitCheckin.mutate({ habitId: row.id, date: today(), checked: false });
-        } : undefined} />)}</div>}
+        } : undefined} />)}</div>
+        <Pagination page={recordPage} pageCount={recordPageCount} onChange={setRecordPage} /></>}
     </section>}
     {dialog && <RecordDialog resource={resource} userId={userId} initial={editing} saving={save.isPending} onClose={() => { if (!save.isPending) { setDialog(false); setEditing(null); } }} onSave={(values) => save.mutate(values)} onDelete={editing ? () => setDeleting(editing) : undefined} />}
+    {settlementTarget && <RecordDialog resource={resource} userId={userId} initial={settlementTarget} settlementOnly saving={save.isPending} onClose={() => { if (!save.isPending) setSettlementTarget(null); }} onSave={(values) => save.mutate(values)} />}
     {deleting && <ConfirmDialog title={`Delete ${String(deleting[resource.display] ?? "record")}?`} detail="This cannot be undone. Related records may also be removed according to the database relationship." busy={remove.isPending} onCancel={() => setDeleting(null)} onConfirm={() => remove.mutate(deleting)} />}
-    {viewingLoanGroup && <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setViewingLoanGroup(null); }}>
+    {viewingLoanGroup && <AppPortal><div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget) setViewingLoanGroup(null); }}>
       <section className="modal loan-transactions-modal" role="dialog" aria-modal="true" aria-labelledby="loan-transactions-title">
         <div className="modalhead"><div><p className="eyebrow">{viewingLoanGroup.direction.toUpperCase()} · LINKED TRANSACTIONS</p><h2 id="loan-transactions-title">{viewingLoanGroup.personName}</h2></div>
           <button className="icon" aria-label="Close linked transactions" onClick={() => setViewingLoanGroup(null)}><X size={17} /></button></div>
         {linkedTransactions.error && <ErrorState error={linkedTransactions.error} onRetry={() => void linkedTransactions.refetch()} />}
         {linkedTransactions.isLoading ? <LoadingState /> : linkedTransactions.error ? null : transactionsForLoanGroup.length
-          ? <div className="loan-transaction-list">{transactionsForLoanGroup.map((transaction) => <article className="loan-transaction" key={transaction.id}>
+          ? <><div className="loan-transaction-list">{visibleTransactions.map((transaction) => <article className="loan-transaction" key={transaction.id}>
             <div><b>{displayValue(transaction.title)}</b><small>{configuredDate(String(transaction.transaction_date ?? ""))} · {String(transaction.type ?? "transaction")}</small></div>
             <strong>{loanCurrency(Number(transaction.amount ?? 0))}</strong>
-          </article>)}</div>
+          </article>)}</div><Pagination page={transactionPage} pageCount={transactionPageCount} onChange={setTransactionPage} /></>
           : <EmptyState title="No linked transactions" detail="These balances were added manually or have no transaction linked yet." />}
         <div className="modal-actions"><button className="secondary" onClick={() => setViewingLoanGroup(null)}>Close</button></div>
       </section>
-    </div>}
+    </div></AppPortal>}
   </div>;
 }
 
@@ -2746,12 +2775,13 @@ function RecordCard({ resource, row, onEdit, onCheckIn, onMarkRead, onPriorityCh
     </div></article>;
 }
 
-function LoanGroupCard({ group, online, accountNames, onViewTransactions, onEdit }: {
+function LoanGroupCard({ group, online, accountNames, onViewTransactions, onEdit, onSettle }: {
   group: LoanGroup;
   online: boolean;
   accountNames: Map<string, string>;
   onViewTransactions: () => void;
   onEdit: (row: Row) => void;
+  onSettle: (row: Row) => void;
 }) {
   const [expanded, setExpanded] = useState(false);
   const amount = loanCurrency(group.outstandingAmount);
@@ -2768,20 +2798,23 @@ function LoanGroupCard({ group, online, accountNames, onViewTransactions, onEdit
       {expanded && <div className="loan-person-entries">{group.entries.map((entry) => <div className="loan-entry" key={entry.id}>
         <div><b>{loanCurrency(Number(entry.amount ?? 0))}</b><small>{configuredDate(String(entry.loan_date ?? ""))}{entry.is_settled ? ` · Settled${entry.settlement_account_id ? ` from ${accountNames.get(String(entry.settlement_account_id)) ?? "selected account"}` : ""}` : ""}</small>
           {entry.notes !== null && entry.notes !== undefined && entry.notes !== "" && <small>{String(entry.notes)}</small>}</div>
-        <div className="inline-actions"><button className="secondary" disabled={!online} onClick={() => onEdit(entry)}>Edit</button></div>
+        <div className="inline-actions"><button className="icon" disabled={!online || Boolean(entry.is_settled)} aria-label={entry.is_settled ? "Already settled" : `Settle ${loanCurrency(Number(entry.amount ?? 0))}`} title={entry.is_settled ? "Already settled" : "Settle"} onClick={() => onSettle(entry)}><Check size={15} /></button><button className="secondary" disabled={!online} onClick={() => onEdit(entry)}>Edit</button></div>
       </div>)}</div>}
     </div>
   </article>;
 }
 
-function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDelete }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void; onDelete?: () => void }) {
-  const formFields = fieldsForRecord(resource, Boolean(initial));
+function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDelete, settlementOnly = false }: { resource: Resource; userId: string; initial: Row | null; saving: boolean; onClose: () => void; onSave: (values: Record<string, unknown>) => void; onDelete?: () => void; settlementOnly?: boolean }) {
+  const formFields = settlementOnly
+    ? resource.fields.filter((field) => ["settlement_account_id", "settled_at"].includes(field.name))
+    : fieldsForRecord(resource, Boolean(initial));
   const defaults = useMemo<Record<string, unknown>>(() => ({
     ...Object.fromEntries(resource.fields.map((field) => [field.name, defaultValue(field, initial?.[field.name])])),
+    ...(settlementOnly ? { is_settled: true, settled_at: initial?.settled_at ?? today() } : {}),
     funding_source: "account",
     account_paid_amount: "",
     borrowed_amount: "",
-  }), [initial, resource]);
+  }), [initial, resource, settlementOnly]);
   const { register, handleSubmit, reset, setError, setValue, watch, formState: { errors } } = useForm<Record<string, unknown>>({
     defaultValues: defaults,
   });
@@ -2859,11 +2892,11 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDe
       }
       return;
     }
-    onSave(values);
+    onSave(settlementOnly ? { ...initial, ...values, is_settled: true } : values);
   }
-  return <div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}>
+  return createPortal(<div className="overlay" role="presentation" onMouseDown={(event) => { if (event.target === event.currentTarget && !saving) onClose(); }}>
     <section className="modal record-modal" role="dialog" aria-modal="true" aria-labelledby="dialog-title">
-      <div className="modalhead"><div><p className="eyebrow">{initial ? "EDIT RECORD" : "NEW RECORD"}</p><h2 id="dialog-title">{initial ? "Update" : "Add"} {resource.label.replace(/s$/, "").toLowerCase()}</h2></div>
+      <div className="modalhead"><div><p className="eyebrow">{settlementOnly ? "SETTLE BALANCE" : initial ? "EDIT RECORD" : "NEW RECORD"}</p><h2 id="dialog-title">{settlementOnly ? `Settle ${String(initial?.person_name ?? "loan")}` : `${initial ? "Update" : "Add"} ${resource.label.replace(/s$/, "").toLowerCase()}`}</h2></div>
         <button className="icon" aria-label="Close dialog" disabled={saving} onClick={onClose}><X size={17} /></button></div>
       <form onSubmit={(event) => void handleSubmit(submit)(event)} noValidate>
         <p className="record-form-hint">{resource.key === "personal_documents"
@@ -2906,7 +2939,7 @@ function RecordDialog({ resource, userId, initial, saving, onClose, onSave, onDe
         <div className="modal-actions">{onDelete && <button type="button" className="danger-button record-delete-action" onClick={onDelete} disabled={saving}><Trash2 size={14} /> Delete</button>}<span className="modal-actions-spacer" /><button type="button" className="secondary" onClick={onClose} disabled={saving}>Cancel</button><button className="primary" type="submit" disabled={saving}>{saving ? "Saving…" : initial ? "Save changes" : `Save ${resource.label.replace(/s$/, "").toLowerCase()}`}</button></div>
       </form>
     </section>
-  </div>;
+  </div>, document.body);
 }
 
 function RelationInput({ field, userId, register, filterType }: { field: Field; userId: string; register: UseFormRegisterReturn; filterType?: string }) {
@@ -3346,7 +3379,7 @@ function OnboardingDialog({ userId, profile, onDone, onToast }: { userId: string
     } catch (error) { onToast(`Could not complete setup: ${error instanceof Error ? error.message : "Unknown error."}`, true); }
     finally { setSaving(false); }
   }
-  return <div className="overlay"><section className="modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+  return <AppPortal><div className="overlay"><section className="modal onboarding-modal" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
     <div className="modalhead"><div><p className="eyebrow">LET’S SET UP YOUR SPACE</p><h2 id="onboarding-title">Welcome to LifeOS</h2></div></div>
     <p className="muted">Choose your basic preferences. You can update everything in Settings later.</p>
     <form onSubmit={(event) => void submit(event)}><div className="form-grid">
@@ -3357,18 +3390,26 @@ function OnboardingDialog({ userId, profile, onDone, onToast }: { userId: string
       <label className="form-field">Fitness goals<textarea value={fitness} onChange={(event) => setFitness(event.target.value)} rows={2} /></label>
       <label className="form-field">Financial goals<textarea value={financial} onChange={(event) => setFinancial(event.target.value)} rows={2} /></label>
     </div><div className="modal-actions"><button className="primary" disabled={saving}>{saving ? "Saving…" : "Finish setup"}</button></div></form>
-  </section></div>;
+  </section></div></AppPortal>;
 }
 
 function ConfirmDialog({ title, detail, busy, onCancel, onConfirm }: { title: string; detail: string; busy: boolean; onCancel: () => void; onConfirm: () => void }) {
-  return <div className="overlay"><section className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
+  return <AppPortal><div className="overlay"><section className="modal confirm-modal" role="dialog" aria-modal="true" aria-labelledby="confirm-title">
     <div className="modalhead"><h2 id="confirm-title">{title}</h2><button className="icon" aria-label="Close dialog" onClick={onCancel}><X size={16} /></button></div>
     <p className="muted">{detail}</p><div className="modal-actions"><button className="secondary" disabled={busy} onClick={onCancel}>Cancel</button><button className="danger-button" disabled={busy} onClick={onConfirm}>{busy ? "Deleting…" : "Delete"}</button></div>
-  </section></div>;
+  </section></div></AppPortal>;
 }
 
 function LoadingState({ compact = false }: { compact?: boolean }) {
   return <div className={`loading-state ${compact ? "loading-compact" : ""}`} role="status"><span className="spinner" />Loading your data…</div>;
+}
+function Pagination({ page, pageCount, onChange }: { page: number; pageCount: number; onChange: (page: number) => void }) {
+  if (pageCount <= 1) return null;
+  return <nav className="pagination" aria-label="Record pages">
+    <button className="icon" aria-label="Previous page" disabled={page === 1} onClick={() => onChange(page - 1)}><ChevronLeft size={15} /></button>
+    <span>Page <b>{page}</b> of <b>{pageCount}</b></span>
+    <button className="icon" aria-label="Next page" disabled={page === pageCount} onClick={() => onChange(page + 1)}><ChevronRight size={15} /></button>
+  </nav>;
 }
 function ErrorState({ error, onRetry }: { error: unknown; onRetry?: () => void }) {
   return <div className="error-state" role="alert"><b>Could not load data from Supabase.</b><span>{error instanceof Error ? error.message : "Check your connection and project configuration."}</span>{onRetry && <button className="secondary" onClick={onRetry}>Try again</button>}</div>;
